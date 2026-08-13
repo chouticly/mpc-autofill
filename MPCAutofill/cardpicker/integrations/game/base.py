@@ -1,5 +1,6 @@
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Type
 from urllib.parse import urljoin, urlparse
@@ -14,12 +15,44 @@ from cardpicker.models import (
     CanonicalExpansion,
     DFCPair,
 )
-from cardpicker.schema_types import Game
+from cardpicker.schema_types import Face, Game, OfficialCardImage
 from cardpicker.utils import section_timer
 
 
 def default_is_response_valid(response: requests.Response) -> bool:
     return response.status_code == 200
+
+
+def scryfall_png_url(scryfall_id: str, face: Face = Face.front) -> str:
+    return f"https://cards.scryfall.io/png/{face.value}/{scryfall_id[0]}/{scryfall_id[1]}/{scryfall_id}.png"
+
+
+def official_card_image(
+    *,
+    name: str,
+    quantity: int,
+    scryfall_id: str,
+    face: Face = Face.front,
+    expansion_code: str | None = None,
+    collector_number: str | None = None,
+) -> OfficialCardImage:
+    if " // " in name:
+        name = name.split(" // ", 1)[0] if face == Face.front else name.split(" // ", 1)[1]
+    return OfficialCardImage(
+        face=face,
+        name=name,
+        pngUrl=scryfall_png_url(scryfall_id, face),
+        quantity=quantity,
+        scryfallId=scryfall_id,
+        collectorNumber=collector_number,
+        expansionCode=expansion_code.upper() if expansion_code else None,
+    )
+
+
+@dataclass
+class ImportedDecklist:
+    cards: str
+    official_images: list[OfficialCardImage] = field(default_factory=list)
 
 
 class ImportSite(ABC):
@@ -39,10 +72,10 @@ class ImportSite(ABC):
 
     @classmethod
     @abstractmethod
-    def retrieve_card_list(cls, url: str) -> str:
+    def retrieve_card_list(cls, url: str) -> str | ImportedDecklist:
         """
         Takes a URL pointing to a card list hosted on this class's site, queries the site's API / whatever for
-        the card list, formats it and returns it.
+        the card list, formats it and returns it. May also include official Scryfall PNG URLs when available.
         """
 
         ...
@@ -111,18 +144,20 @@ class GameIntegration(ABC):
     # endregion
 
     @classmethod
-    def query_import_site(cls, url: Optional[str]) -> Optional[str]:
+    def query_import_site(cls, url: Optional[str]) -> Optional[ImportedDecklist]:
         if url is None:
             raise ValueError("No decklist URL provided.")
         netloc = urlparse(url).netloc
         for site in cls.get_import_sites():
             if netloc in site.get_host_names():
-                text = site.retrieve_card_list(url)
+                result = site.retrieve_card_list(url)
+                if isinstance(result, str):
+                    result = ImportedDecklist(cards=result)
                 cleaned_text = "\n".join(
-                    [stripped_line for line in text.split("\n") if len(stripped_line := line.strip()) > 0]
+                    [stripped_line for line in result.cards.split("\n") if len(stripped_line := line.strip()) > 0]
                 )
                 if len(cleaned_text) > 0:
-                    return cleaned_text
+                    return ImportedDecklist(cards=cleaned_text, official_images=result.official_images)
         return None
 
     @classmethod
@@ -166,4 +201,10 @@ class GameIntegration(ABC):
         print(f"Bulk synced expansions in {round(t2 - t1, 2)} seconds.")
 
 
-__all__ = ["ImportSite", "GameIntegration"]
+__all__ = [
+    "ImportSite",
+    "GameIntegration",
+    "ImportedDecklist",
+    "official_card_image",
+    "scryfall_png_url",
+]

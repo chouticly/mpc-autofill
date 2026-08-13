@@ -16,7 +16,10 @@ export function ExportImages() {
   const cardDocumentsByIdentifier = useCardDocumentsByIdentifier();
   const downloadImages = async () => {
     const cardDocuments = Object.values(cardDocumentsByIdentifier).filter(
-      (cardDocument) => cardDocument.sourceType === SourceType.GoogleDrive
+      (cardDocument) =>
+        cardDocument.sourceType === SourceType.GoogleDrive ||
+        cardDocument.mediumThumbnailUrl != null ||
+        cardDocument.smallThumbnailUrl != null
     );
     cardDocuments.map(queueImageDownload);
     const n = cardDocuments.length;

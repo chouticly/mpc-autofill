@@ -18,14 +18,19 @@ from pydantic import BaseModel, ValidationError
 
 from django.conf import settings
 
-from cardpicker.integrations.game.base import GameIntegration, ImportSite
+from cardpicker.integrations.game.base import (
+    GameIntegration,
+    ImportSite,
+    ImportedDecklist,
+    official_card_image,
+)
 from cardpicker.models import (
     CanonicalArtist,
     CanonicalCard,
     CanonicalExpansion,
     DFCPair,
 )
-from cardpicker.schema_types import Game
+from cardpicker.schema_types import Face, Game
 from cardpicker.utils import (
     get_json_endpoint_rate_limited,
     section_timer,
@@ -53,6 +58,64 @@ def format_decklist_line(
     return line
 
 
+@ratelimit.sleep_and_retry  # type: ignore  # `ratelimit` does not implement decorator typing correctly
+@ratelimit.limits(calls=8, period=1)  # type: ignore  # `ratelimit` does not implement decorator typing correctly
+def resolve_scryfall_id(expansion_code: str, collector_number: str) -> str | None:
+    match = (
+        CanonicalCard.objects.filter(
+            expansion__code__iexact=expansion_code,
+            collector_number__iexact=collector_number,
+        )
+        .values_list("identifier", flat=True)
+        .first()
+    )
+    if match is not None:
+        return str(match)
+    response = requests.get(
+        f"https://api.scryfall.com/cards/{expansion_code.lower()}/{collector_number}",
+        headers={"User-Agent": "mpc-autofill/1.0", "Accept": "application/json"},
+        timeout=15,
+    )
+    if response.status_code != 200:
+        return None
+    return response.json().get("id")
+
+
+def official_images_for_printing(
+    *,
+    name: str,
+    quantity: int,
+    scryfall_id: str | None,
+    expansion_code: str | None = None,
+    collector_number: str | None = None,
+) -> list:
+    if not scryfall_id and expansion_code and collector_number:
+        scryfall_id = resolve_scryfall_id(expansion_code, collector_number)
+    if not scryfall_id:
+        return []
+    images = [
+        official_card_image(
+            name=name,
+            quantity=quantity,
+            scryfall_id=str(scryfall_id),
+            expansion_code=expansion_code,
+            collector_number=collector_number,
+        )
+    ]
+    if " // " in name:
+        images.append(
+            official_card_image(
+                name=name,
+                quantity=quantity,
+                scryfall_id=str(scryfall_id),
+                face=Face.back,
+                expansion_code=expansion_code,
+                collector_number=collector_number,
+            )
+        )
+    return images
+
+
 class Aetherhub(ImportSite):
     @staticmethod
     def get_host_names() -> list[str]:
@@ -73,7 +136,7 @@ class Archidekt(ImportSite):
         return ["archidekt.com", "www.archidekt.com"]
 
     @classmethod
-    def retrieve_card_list(cls, url: str) -> str:
+    def retrieve_card_list(cls, url: str) -> ImportedDecklist:
         path = urlparse(url).path
         regex_results = re.compile(r"^/decks/(.+?)(?:[\#\/].*)?$").search(path)
         if regex_results is None:
@@ -83,18 +146,33 @@ class Archidekt(ImportSite):
             raise cls.InvalidURLException(url)
         response_json = cls.request(path=f"api/decks/{deck_id}/").json()
         lines = []
+        official_images = []
         for entry in response_json["cards"]:
             card = entry["card"]
             edition = card.get("edition") or {}
+            expansion_code = edition.get("editioncode")
+            collector_number = card.get("collectorNumber")
+            name = card["oracleCard"]["name"]
+            quantity = entry["quantity"]
             lines.append(
                 format_decklist_line(
-                    quantity=entry["quantity"],
-                    name=card["oracleCard"]["name"],
-                    expansion_code=edition.get("editioncode"),
-                    collector_number=card.get("collectorNumber"),
+                    quantity=quantity,
+                    name=name,
+                    expansion_code=expansion_code,
+                    collector_number=collector_number,
                 )
             )
-        return "\n".join(lines)
+            scryfall_id = card.get("uid")
+            official_images.extend(
+                official_images_for_printing(
+                    name=name,
+                    quantity=quantity,
+                    scryfall_id=str(scryfall_id) if scryfall_id else None,
+                    expansion_code=expansion_code,
+                    collector_number=collector_number,
+                )
+            )
+        return ImportedDecklist(cards="\n".join(lines), official_images=official_images)
 
 
 class CubeCobra(ImportSite):
@@ -184,7 +262,7 @@ class ManaStack(ImportSite):
         return ["manastack.com"]  # www. is explicitly not valid
 
     @classmethod
-    def retrieve_card_list(cls, url: str) -> str:
+    def retrieve_card_list(cls, url: str) -> ImportedDecklist:
         path = urlparse(url).path
         deck_id = path.split("/")[-1]
         if not deck_id:
@@ -192,18 +270,32 @@ class ManaStack(ImportSite):
         response = cls.request(path=f"api/deck/list?slug={deck_id}")
         response_json = response.json()
         lines = []
+        official_images = []
         for item in response_json["list"]["cards"]:
             card = item["card"]
             card_set = card.get("set") or {}
+            expansion_code = card_set.get("slug")
+            collector_number = card.get("num")
+            name = card["name"]
+            quantity = item["count"]
             lines.append(
                 format_decklist_line(
-                    quantity=item["count"],
-                    name=card["name"],
-                    expansion_code=card_set.get("slug"),
-                    collector_number=card.get("num"),
+                    quantity=quantity,
+                    name=name,
+                    expansion_code=expansion_code,
+                    collector_number=collector_number,
                 )
             )
-        return "\n".join(lines)
+            official_images.extend(
+                official_images_for_printing(
+                    name=name,
+                    quantity=quantity,
+                    scryfall_id=None,
+                    expansion_code=expansion_code,
+                    collector_number=collector_number,
+                )
+            )
+        return ImportedDecklist(cards="\n".join(lines), official_images=official_images)
 
 
 class Moxfield(ImportSite):
@@ -215,7 +307,7 @@ class Moxfield(ImportSite):
     @classmethod
     @ratelimit.sleep_and_retry  # type: ignore  # `ratelimit` does not implement decorator typing correctly
     @ratelimit.limits(calls=1, period=1)  # type: ignore  # `ratelimit` does not implement decorator typing correctly
-    def retrieve_card_list(cls, url: str) -> str:
+    def retrieve_card_list(cls, url: str) -> ImportedDecklist:
         path = urlparse(url).path
         deck_id = path.split("/")[-1]
         response = cls.request(
@@ -223,6 +315,7 @@ class Moxfield(ImportSite):
         )
         response_json = response.json()
         lines = []
+        official_images = []
         for category in [
             "commanders",
             "companions",
@@ -232,18 +325,30 @@ class Moxfield(ImportSite):
         ]:
             for name, info in response_json.get(category, {}).items():
                 card = info.get("card") or {}
+                expansion_code = card.get("set")
+                collector_number = card.get("cn")
+                quantity = info["quantity"]
                 lines.append(
                     format_decklist_line(
-                        quantity=info["quantity"],
+                        quantity=quantity,
                         name=name,
-                        expansion_code=card.get("set"),
-                        collector_number=card.get("cn"),
+                        expansion_code=expansion_code,
+                        collector_number=collector_number,
+                    )
+                )
+                official_images.extend(
+                    official_images_for_printing(
+                        name=name,
+                        quantity=quantity,
+                        scryfall_id=card.get("scryfall_id") or card.get("id"),
+                        expansion_code=expansion_code,
+                        collector_number=collector_number,
                     )
                 )
         for token in response_json.get("tokens", []):
             if token["layout"] == "token":
                 lines.append(f"t:{token['name']}")
-        return "\n".join(lines)
+        return ImportedDecklist(cards="\n".join(lines), official_images=official_images)
 
 
 class MTGGoldfish(ImportSite):
@@ -271,7 +376,7 @@ class Scryfall(ImportSite):
         return ["scryfall.com", "www.scryfall.com"]
 
     @classmethod
-    def retrieve_card_list(cls, url: str) -> str:
+    def retrieve_card_list(cls, url: str) -> ImportedDecklist:
         path = urlparse(url).path
         deck_id = path.rsplit("#", 1)[0].split("/")[-1]
         if not deck_id:
@@ -281,16 +386,30 @@ class Scryfall(ImportSite):
         )
         reader = csv.DictReader(io.StringIO(response.text))
         lines = []
+        official_images = []
         for row in reader:
+            name = row["name"]
+            quantity = int(row["count"])
+            expansion_code = row.get("set_code") or None
+            collector_number = row.get("collector_number") or None
             lines.append(
                 format_decklist_line(
-                    quantity=row["count"],
-                    name=row["name"],
-                    expansion_code=row.get("set_code") or None,
-                    collector_number=row.get("collector_number") or None,
+                    quantity=quantity,
+                    name=name,
+                    expansion_code=expansion_code,
+                    collector_number=collector_number,
                 )
             )
-        return "\n".join(lines)
+            official_images.extend(
+                official_images_for_printing(
+                    name=name,
+                    quantity=quantity,
+                    scryfall_id=row.get("scryfall_id") or None,
+                    expansion_code=expansion_code,
+                    collector_number=collector_number,
+                )
+            )
+        return ImportedDecklist(cards="\n".join(lines), official_images=official_images)
 
 
 class TappedOut(ImportSite):

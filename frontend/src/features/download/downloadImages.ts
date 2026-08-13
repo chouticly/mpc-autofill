@@ -11,7 +11,10 @@ export function useDoImageDownload(): (
 
   async function doImageDownload(cardDocument: CardDocument): Promise<boolean> {
     try {
-      const imageURL = getWorkerImageURL(cardDocument, "full", 1500);
+      const imageURL =
+        getWorkerImageURL(cardDocument, "full", 1500) ??
+        cardDocument.mediumThumbnailUrl ??
+        cardDocument.smallThumbnailUrl;
       if (!imageURL) {
         return Promise.reject(
           `Failed to formulate download URL for ${cardDocument.name} (${cardDocument.identifier})`

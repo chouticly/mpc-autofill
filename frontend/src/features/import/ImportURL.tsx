@@ -16,13 +16,19 @@ import {
   convertLinesIntoSlotProjectMembers,
   processStringAsMultipleLines,
 } from "@/common/processing";
+import { Face } from "@/common/schema_types";
 import { useAppDispatch, useAppSelector } from "@/common/types";
 import { RightPaddedIcon } from "@/components/icon";
 import { Spinner } from "@/components/Spinner";
+import { downloadFile } from "@/features/download/download";
+import { useClientSearchContext } from "@/features/clientSearch/clientSearchContext";
+import { buildOfficialImageSearchResults } from "@/features/import/officialImages";
 import { useGetDFCPairsQuery, useGetImportSitesQuery } from "@/store/api";
 import { api } from "@/store/api";
 import { useProjectName } from "@/store/slices/backendSlice";
+import { addCardDocuments } from "@/store/slices/cardDocumentsSlice";
 import { addMembers, selectProjectSize } from "@/store/slices/projectSlice";
+import { prependSearchResults } from "@/store/slices/searchResultsSlice";
 import { selectFuzzySearch } from "@/store/slices/searchSettingsSlice";
 import { setNotification } from "@/store/slices/toastsSlice";
 
@@ -39,8 +45,10 @@ export function ImportURL({ onImportComplete, inputRef }: ImportURLProps) {
   const projectName = useProjectName();
   const fuzzySearch = useAppSelector(selectFuzzySearch);
   const projectSize = useAppSelector(selectProjectSize);
+  const { clientSearchService } = useClientSearchContext();
 
   const [urlValue, setUrlValue] = useState<string>("");
+  const [downloadOfficialArt, setDownloadOfficialArt] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
   const internalRef = useRef<HTMLInputElement>(null);
   const ref = inputRef ?? internalRef;
@@ -52,12 +60,23 @@ export function ImportURL({ onImportComplete, inputRef }: ImportURLProps) {
       if (trimmedURL.length > 0) {
         setLoading(true);
         try {
-          const query = await triggerFn(urlValue);
+          const query = await triggerFn(trimmedURL);
+          const response = query.data;
+          const decklistText = response?.cards ?? "";
+          const officialImages = response?.officialImages ?? [];
           const processedLines = processStringAsMultipleLines(
-            query.data ?? "",
+            decklistText,
             dfcPairsQuery.data ?? {},
             fuzzySearch
           );
+
+          if (officialImages.length > 0) {
+            const { documents, searchResults } =
+              buildOfficialImageSearchResults(officialImages);
+            dispatch(addCardDocuments(documents));
+            dispatch(prependSearchResults(searchResults));
+          }
+
           dispatch(
             addMembers({
               members: convertLinesIntoSlotProjectMembers(
@@ -66,6 +85,45 @@ export function ImportURL({ onImportComplete, inputRef }: ImportURLProps) {
               ),
             })
           );
+
+          if (downloadOfficialArt && officialImages.length > 0) {
+            const seen = new Set<string>();
+            for (const image of officialImages) {
+              if (image.face !== Face.Front) {
+                continue;
+              }
+              if (seen.has(image.pngUrl)) {
+                continue;
+              }
+              seen.add(image.pngUrl);
+              const fileName = `${image.name}${
+                image.expansionCode != null
+                  ? ` (${image.expansionCode}) ${image.collectorNumber ?? ""}`
+                  : ""
+              }.png`.replace(/\s+/g, " ");
+              try {
+                await downloadFile(
+                  undefined,
+                  new URL(image.pngUrl),
+                  fileName.trim(),
+                  clientSearchService
+                );
+              } catch {
+                // Keep importing even if an individual PNG download fails.
+              }
+            }
+            dispatch(
+              setNotification([
+                "official-art-download",
+                {
+                  name: "Official Art Downloaded",
+                  message: `Saved ${seen.size} Scryfall PNG(s) at highest quality.`,
+                  level: "info",
+                },
+              ])
+            );
+          }
+
           setUrlValue("");
           onImportComplete?.();
         } catch (error: any) {
@@ -92,6 +150,8 @@ export function ImportURL({ onImportComplete, inputRef }: ImportURLProps) {
       triggerFn,
       fuzzySearch,
       onImportComplete,
+      downloadOfficialArt,
+      clientSearchService,
     ]
   );
 
@@ -138,6 +198,16 @@ export function ImportURL({ onImportComplete, inputRef }: ImportURLProps) {
             value={urlValue}
             disabled={loading || importSitesQuery.data == null}
             aria-label="import-url"
+          />
+        </Form.Group>
+        <Form.Group className="mb-3">
+          <Form.Check
+            type="checkbox"
+            id="download-official-art"
+            label="Download official Scryfall art (highest quality PNG)"
+            checked={downloadOfficialArt}
+            onChange={(event) => setDownloadOfficialArt(event.target.checked)}
+            disabled={loading}
           />
         </Form.Group>
         <Stack direction="horizontal" gap={1}>

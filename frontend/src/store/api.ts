@@ -82,15 +82,14 @@ export const api = createApi({
       transformResponse: (response: ImportSitesResponse, meta, arg) =>
         response.importSites,
     }),
-    queryImportSite: builder.query<string, string>({
+    queryImportSite: builder.query<ImportSiteDecklistResponse, string>({
       query: (url) => ({
         url: `2/importSiteDecklist/`,
         method: "POST",
         body: JSON.stringify({ url } as ImportSiteDecklistRequest),
       }),
       providesTags: [QueryTags.BackendSpecific],
-      transformResponse: (response: ImportSiteDecklistResponse, meta, arg) =>
-        response.cards,
+      transformResponse: (response: ImportSiteDecklistResponse) => response,
     }),
     getDFCPairs: builder.query<DFCPairs, void>({
       query: () => ({ url: `2/DFCPairs/`, method: "GET" }),

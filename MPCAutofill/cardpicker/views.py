@@ -370,7 +370,12 @@ def post_import_site_decklist(request: HttpRequest) -> HttpResponse:
         decklist = game_integration.query_import_site(url=import_site_decklist_request.url)
         if decklist is None:
             raise BadRequestException("The specified decklist URL does not match any known import sites.")
-        return JsonResponse(ImportSiteDecklistResponse(cards=decklist).model_dump())
+        return JsonResponse(
+            ImportSiteDecklistResponse(
+                cards=decklist.cards,
+                officialImages=decklist.official_images or None,
+            ).model_dump()
+        )
     except ValueError as e:
         raise BadRequestException(str(e))
 

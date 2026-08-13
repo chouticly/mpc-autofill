@@ -5,6 +5,12 @@
   "properties": {
     "cards": {
       "type": "string"
+    },
+    "officialImages": {
+      "type": "array",
+      "items": {
+        "$ref": "../OfficialCardImage.json"
+      }
     }
   },
   "required": ["cards"],

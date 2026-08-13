@@ -116,7 +116,7 @@ class TestMTGIntegration:
     def test_valid_url(self, client, django_settings, snapshot, url: str):
         decklist = MTGIntegration.query_import_site(url)
         assert decklist
-        assert Counter(decklist.splitlines()) == snapshot
+        assert Counter(decklist.cards.splitlines()) == snapshot
 
     @pytest.mark.parametrize(
         "moxfield_secret, is_moxfield_enabled",
@@ -171,6 +171,19 @@ class TestMTGIntegration:
             == expected
         )
 
+    def test_scryfall_png_url_uses_highest_quality_path(self):
+        from cardpicker.integrations.game.base import scryfall_png_url
+        from cardpicker.schema_types import Face
+
+        assert (
+            scryfall_png_url("abff6c81-65a4-48fa-ba8f-580f87b0344a")
+            == "https://cards.scryfall.io/png/front/a/b/abff6c81-65a4-48fa-ba8f-580f87b0344a.png"
+        )
+        assert (
+            scryfall_png_url("abff6c81-65a4-48fa-ba8f-580f87b0344a", Face.back)
+            == "https://cards.scryfall.io/png/back/a/b/abff6c81-65a4-48fa-ba8f-580f87b0344a.png"
+        )
+
     def test_archidekt_includes_printings(self):
         payload = {
             "cards": [
@@ -180,6 +193,7 @@ class TestMTGIntegration:
                         "oracleCard": {"name": "Brainstorm"},
                         "edition": {"editioncode": "40k"},
                         "collectorNumber": "192",
+                        "uid": "11111111-1111-1111-1111-111111111111",
                     },
                 },
                 {
@@ -188,6 +202,7 @@ class TestMTGIntegration:
                         "oracleCard": {"name": "Delver of Secrets // Insectile Aberration"},
                         "edition": {"editioncode": "mid"},
                         "collectorNumber": "47",
+                        "uid": "abff6c81-65a4-48fa-ba8f-580f87b0344a",
                     },
                 },
             ]
@@ -195,10 +210,13 @@ class TestMTGIntegration:
         with requests_mock.Mocker() as mock:
             mock.get("https://archidekt.com/api/decks/3380653/", json=payload)
             decklist = Archidekt.retrieve_card_list(self.Decks.ARCHIDEKT.value)
-        assert decklist.splitlines() == [
+        assert decklist.cards.splitlines() == [
             "4 Brainstorm (40K) 192",
             "1 Delver of Secrets (MID) 47",
         ]
+        assert len(decklist.official_images) == 3  # brainstorm front + delver front/back
+        assert all(image.pngUrl.endswith(".png") for image in decklist.official_images)
+        assert any(image.face.value == "back" for image in decklist.official_images)
 
     def test_manastack_includes_printings(self):
         payload = {
@@ -218,7 +236,7 @@ class TestMTGIntegration:
         with requests_mock.Mocker() as mock:
             mock.get("https://manastack.com/api/deck/list?slug=test-426", json=payload)
             decklist = ManaStack.retrieve_card_list(self.Decks.MANASTACK.value)
-        assert decklist == "3 Past in Flames (40K) 206"
+        assert decklist.cards == "3 Past in Flames (40K) 206"
 
     def test_moxfield_includes_printings(self):
         payload = {
@@ -242,19 +260,20 @@ class TestMTGIntegration:
                 json=payload,
             )
             decklist = Moxfield.retrieve_card_list(self.Decks.MOXFIELD.value)
-        assert Counter(decklist.splitlines()) == Counter(
+        assert Counter(decklist.cards.splitlines()) == Counter(
             [
                 "4 Brainstorm (40K) 192",
                 "1 Delver of Secrets (MID) 47",
                 "t:Innistrad Checklist",
             ]
         )
+        assert any(image.scryfallId for image in decklist.official_images)
 
     def test_scryfall_includes_printings(self):
         csv_body = (
-            "section,count,name,set_code,collector_number\n"
-            "mainboard,4,Brainstorm,afc,79\n"
-            "mainboard,1,Delver of Secrets // Insectile Aberration,mid,47\n"
+            "section,count,name,set_code,collector_number,scryfall_id\n"
+            "mainboard,4,Brainstorm,afc,79,22222222-2222-2222-2222-222222222222\n"
+            "mainboard,1,Delver of Secrets // Insectile Aberration,mid,47,abff6c81-65a4-48fa-ba8f-580f87b0344a\n"
         )
         with requests_mock.Mocker() as mock:
             mock.get(
@@ -262,10 +281,12 @@ class TestMTGIntegration:
                 text=csv_body,
             )
             decklist = Scryfall.retrieve_card_list(self.Decks.SCRYFALL.value)
-        assert decklist.splitlines() == [
+        assert decklist.cards.splitlines() == [
             "4 Brainstorm (AFC) 79",
             "1 Delver of Secrets (MID) 47",
         ]
+        assert len(decklist.official_images) >= 2
+        assert decklist.official_images[0].pngUrl.startswith("https://cards.scryfall.io/png/")
 
     @dataclass
     class TestCard:

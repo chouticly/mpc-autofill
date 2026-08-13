@@ -1,0 +1,31 @@
+{
+  "title": "Official Card Image",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "integer"
+    },
+    "scryfallId": {
+      "type": "string"
+    },
+    "pngUrl": {
+      "type": "string"
+    },
+    "expansionCode": {
+      "type": "string"
+    },
+    "collectorNumber": {
+      "type": "string"
+    },
+    "face": {
+      "type": "string",
+      "enum": ["front", "back"]
+    }
+  },
+  "required": ["name", "quantity", "scryfallId", "pngUrl", "face"],
+  "additionalProperties": false
+}

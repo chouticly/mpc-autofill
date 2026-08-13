@@ -142,6 +142,18 @@ export const searchResultsSlice = createAppSlice({
     addSearchResults: (state, action) => {
       state.searchResults = { ...state.searchResults, ...action.payload };
     },
+    prependSearchResults: (state, action) => {
+      for (const [hashKey, ids] of Object.entries(
+        action.payload as SearchResults
+      )) {
+        const existing = state.searchResults[hashKey] ?? [];
+        const existingSet = new Set(existing);
+        state.searchResults[hashKey] = [
+          ...ids.filter((id) => !existingSet.has(id)),
+          ...existing,
+        ];
+      }
+    },
     clearSearchResults: (state) => {
       state.searchResults = {};
     },
@@ -153,7 +165,16 @@ export const searchResultsSlice = createAppSlice({
       })
       .addCase(fetchSearchResults.fulfilled, (state, action) => {
         state.status = "succeeded";
-        state.searchResults = { ...state.searchResults, ...action.payload };
+        // Merge rather than replace so client-injected results (e.g. Scryfall
+        // official PNGs) stay at the front when remote results arrive.
+        for (const [hashKey, ids] of Object.entries(action.payload)) {
+          const existing = state.searchResults[hashKey] ?? [];
+          const existingSet = new Set(existing);
+          state.searchResults[hashKey] = [
+            ...existing,
+            ...ids.filter((id) => !existingSet.has(id)),
+          ];
+        }
       })
       .addCase(fetchSearchResults.rejected, (state, action) => {
         state.status = "failed";
@@ -166,7 +187,7 @@ export const searchResultsSlice = createAppSlice({
   },
 });
 
-export const { addSearchResults, clearSearchResults } =
+export const { addSearchResults, prependSearchResults, clearSearchResults } =
   searchResultsSlice.actions;
 
 export default searchResultsSlice.reducer;
