@@ -75,6 +75,18 @@ export function ImportURL({ onImportComplete, inputRef }: ImportURLProps) {
               buildOfficialImageSearchResults(officialImages);
             dispatch(addCardDocuments(documents));
             dispatch(prependSearchResults(searchResults));
+          } else {
+            dispatch(
+              setNotification([
+                "official-art-missing",
+                {
+                  name: "No Official Art Returned",
+                  message:
+                    "This backend did not return Scryfall PNG URLs for the deck. Point the editor at a backend that includes the official-art import feature.",
+                  level: "warning",
+                },
+              ])
+            );
           }
 
           dispatch(

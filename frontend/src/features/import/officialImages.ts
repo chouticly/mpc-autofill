@@ -51,20 +51,36 @@ export function buildOfficialImageSearchResults(
   const documents: CardDocuments = {};
   const searchResults: SearchResults = {};
 
+  const addResult = (query: SearchQuery, identifier: string) => {
+    const hashKey = computeSearchQueryHashKey(query);
+    searchResults[hashKey] = [
+      identifier,
+      ...(searchResults[hashKey] ?? []).filter((id) => id !== identifier),
+    ];
+  };
+
   for (const image of images) {
-    const query: SearchQuery = {
+    const identifier = officialImageIdentifier(image);
+    documents[identifier] = officialImageToCardDocument(image);
+
+    const printingQuery: SearchQuery = {
       query: processQuery(image.name),
       cardType: CardTypeSchema.Card,
       expansionCode: image.expansionCode,
       collectorNumber: image.collectorNumber,
     };
-    const hashKey = computeSearchQueryHashKey(query);
-    const identifier = officialImageIdentifier(image);
-    documents[identifier] = officialImageToCardDocument(image);
-    searchResults[hashKey] = [
-      identifier,
-      ...(searchResults[hashKey] ?? []).filter((id) => id !== identifier),
-    ];
+    addResult(printingQuery, identifier);
+
+    // DFC backs from processLine omit expansion/collector; also index that query.
+    if (image.expansionCode != null || image.collectorNumber != null) {
+      addResult(
+        {
+          query: processQuery(image.name),
+          cardType: CardTypeSchema.Card,
+        },
+        identifier
+      );
+    }
   }
 
   return { documents, searchResults };

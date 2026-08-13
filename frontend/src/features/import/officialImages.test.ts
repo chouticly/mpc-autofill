@@ -23,20 +23,23 @@ test("officialImageToCardDocument uses Scryfall PNG URLs", () => {
   expect(document.canonicalCard?.expansionCode).toBe("40K");
 });
 
-test("buildOfficialImageSearchResults prefers official ids first", () => {
-  const { documents, searchResults } = buildOfficialImageSearchResults([
+test("buildOfficialImageSearchResults indexes DFC backs without printing filters", () => {
+  const { searchResults } = buildOfficialImageSearchResults([
     {
-      name: "Brainstorm",
+      name: "Insectile Aberration",
       quantity: 1,
-      scryfallId: "abcdef00-0000-0000-0000-000000000001",
+      scryfallId: "abff6c81-65a4-48fa-ba8f-580f87b0344a",
       pngUrl:
-        "https://cards.scryfall.io/png/front/a/b/abcdef00-0000-0000-0000-000000000001.png",
-      face: Face.Front,
-      expansionCode: "40K",
-      collectorNumber: "192",
+        "https://cards.scryfall.io/png/back/a/b/abff6c81-65a4-48fa-ba8f-580f87b0344a.png",
+      face: Face.Back,
+      expansionCode: "MID",
+      collectorNumber: "47",
     },
   ]);
-  expect(Object.keys(documents)).toHaveLength(1);
-  const ids = Object.values(searchResults)[0];
-  expect(ids[0]).toContain("abcdef00-0000-0000-0000-000000000001");
+  // name-only query used for DFC backs
+  const nameOnlyHash = Object.keys(searchResults).find((key) =>
+    searchResults[key].some((id) => id.endsWith(":back"))
+  );
+  expect(Object.keys(searchResults).length).toBeGreaterThanOrEqual(2);
+  expect(nameOnlyHash).toBeDefined();
 });
