@@ -1,4 +1,6 @@
 import concurrent.futures
+import csv
+import io
 import logging
 import re
 import time
@@ -35,6 +37,22 @@ logger = logging.getLogger(__name__)
 # region import sites
 
 
+def format_decklist_line(
+    quantity: int | str,
+    name: str,
+    expansion_code: str | None = None,
+    collector_number: str | None = None,
+) -> str:
+    if " // " in name:
+        name = name.split(" // ", 1)[0]
+    line = f"{quantity} {name}"
+    if expansion_code:
+        line += f" ({expansion_code.upper()})"
+        if collector_number:
+            line += f" {collector_number}"
+    return line
+
+
 class Aetherhub(ImportSite):
     @staticmethod
     def get_host_names() -> list[str]:
@@ -64,7 +82,19 @@ class Archidekt(ImportSite):
         if not deck_id:
             raise cls.InvalidURLException(url)
         response_json = cls.request(path=f"api/decks/{deck_id}/").json()
-        return "\n".join([f"{x['quantity']} {x['card']['oracleCard']['name']}" for x in response_json["cards"]])
+        lines = []
+        for entry in response_json["cards"]:
+            card = entry["card"]
+            edition = card.get("edition") or {}
+            lines.append(
+                format_decklist_line(
+                    quantity=entry["quantity"],
+                    name=card["oracleCard"]["name"],
+                    expansion_code=edition.get("editioncode"),
+                    collector_number=card.get("collectorNumber"),
+                )
+            )
+        return "\n".join(lines)
 
 
 class CubeCobra(ImportSite):
@@ -161,8 +191,19 @@ class ManaStack(ImportSite):
             raise cls.InvalidURLException(url)
         response = cls.request(path=f"api/deck/list?slug={deck_id}")
         response_json = response.json()
-        card_list = "\n".join([f"{item['count']} {item['card']['name']}" for item in response_json["list"]["cards"]])
-        return card_list
+        lines = []
+        for item in response_json["list"]["cards"]:
+            card = item["card"]
+            card_set = card.get("set") or {}
+            lines.append(
+                format_decklist_line(
+                    quantity=item["count"],
+                    name=card["name"],
+                    expansion_code=card_set.get("slug"),
+                    collector_number=card.get("num"),
+                )
+            )
+        return "\n".join(lines)
 
 
 class Moxfield(ImportSite):
@@ -181,7 +222,7 @@ class Moxfield(ImportSite):
             path=f"v2/decks/all/{deck_id}", netloc="api.moxfield.com", headers={"User-Agent": settings.MOXFIELD_SECRET}
         )
         response_json = response.json()
-        card_list = ""
+        lines = []
         for category in [
             "commanders",
             "companions",
@@ -190,11 +231,19 @@ class Moxfield(ImportSite):
             "maybeboard",
         ]:
             for name, info in response_json.get(category, {}).items():
-                card_list += f"{info['quantity']} {name}\n"
+                card = info.get("card") or {}
+                lines.append(
+                    format_decklist_line(
+                        quantity=info["quantity"],
+                        name=name,
+                        expansion_code=card.get("set"),
+                        collector_number=card.get("cn"),
+                    )
+                )
         for token in response_json.get("tokens", []):
             if token["layout"] == "token":
-                card_list += f"t:{token['name']}\n"
-        return card_list
+                lines.append(f"t:{token['name']}")
+        return "\n".join(lines)
 
 
 class MTGGoldfish(ImportSite):
@@ -228,12 +277,20 @@ class Scryfall(ImportSite):
         if not deck_id:
             raise cls.InvalidURLException(url)
         response = cls.request(
-            path=f"decks/{deck_id}/export/text", netloc="api.scryfall.com", headers=cls.get_headers()
+            path=f"decks/{deck_id}/export/csv", netloc="api.scryfall.com", headers=cls.get_headers()
         )
-        card_list = response.text
-        for line_to_remove in ["// Sideboard"]:
-            card_list = card_list.replace(line_to_remove, "")
-        return card_list
+        reader = csv.DictReader(io.StringIO(response.text))
+        lines = []
+        for row in reader:
+            lines.append(
+                format_decklist_line(
+                    quantity=row["count"],
+                    name=row["name"],
+                    expansion_code=row.get("set_code") or None,
+                    collector_number=row.get("collector_number") or None,
+                )
+            )
+        return "\n".join(lines)
 
 
 class TappedOut(ImportSite):
@@ -561,4 +618,4 @@ class MTGIntegration(GameIntegration):
     # endregion
 
 
-__all__ = ["MTGIntegration"]
+__all__ = ["MTGIntegration", "format_decklist_line"]

@@ -19,7 +19,14 @@ from PIL import Image
 
 from django.conf import settings as conf_settings
 
-from cardpicker.integrations.game.mtg import Moxfield, MTGIntegration
+from cardpicker.integrations.game.mtg import (
+    Archidekt,
+    ManaStack,
+    Moxfield,
+    MTGIntegration,
+    Scryfall,
+    format_decklist_line,
+)
 from cardpicker.integrations.integrations import get_configured_game_integration
 from cardpicker.models import CanonicalCard
 from cardpicker.schema_types import Game
@@ -137,6 +144,128 @@ class TestMTGIntegration:
             t1 = time.time()
             t = t1 - t0
             assert t > 5  # one second between calls
+
+    @pytest.mark.parametrize(
+        "quantity, name, expansion_code, collector_number, expected",
+        [
+            (4, "Brainstorm", "40k", "192", "4 Brainstorm (40K) 192"),
+            (1, "Brainstorm", "mh2", None, "1 Brainstorm (MH2)"),
+            (2, "Brainstorm", None, "192", "2 Brainstorm"),
+            (
+                1,
+                "Delver of Secrets // Insectile Aberration",
+                "mid",
+                "47",
+                "1 Delver of Secrets (MID) 47",
+            ),
+        ],
+    )
+    def test_format_decklist_line(self, quantity, name, expansion_code, collector_number, expected):
+        assert (
+            format_decklist_line(
+                quantity=quantity,
+                name=name,
+                expansion_code=expansion_code,
+                collector_number=collector_number,
+            )
+            == expected
+        )
+
+    def test_archidekt_includes_printings(self):
+        payload = {
+            "cards": [
+                {
+                    "quantity": 4,
+                    "card": {
+                        "oracleCard": {"name": "Brainstorm"},
+                        "edition": {"editioncode": "40k"},
+                        "collectorNumber": "192",
+                    },
+                },
+                {
+                    "quantity": 1,
+                    "card": {
+                        "oracleCard": {"name": "Delver of Secrets // Insectile Aberration"},
+                        "edition": {"editioncode": "mid"},
+                        "collectorNumber": "47",
+                    },
+                },
+            ]
+        }
+        with requests_mock.Mocker() as mock:
+            mock.get("https://archidekt.com/api/decks/3380653/", json=payload)
+            decklist = Archidekt.retrieve_card_list(self.Decks.ARCHIDEKT.value)
+        assert decklist.splitlines() == [
+            "4 Brainstorm (40K) 192",
+            "1 Delver of Secrets (MID) 47",
+        ]
+
+    def test_manastack_includes_printings(self):
+        payload = {
+            "list": {
+                "cards": [
+                    {
+                        "count": 3,
+                        "card": {
+                            "name": "Past in Flames",
+                            "set": {"slug": "40K"},
+                            "num": "206",
+                        },
+                    }
+                ]
+            }
+        }
+        with requests_mock.Mocker() as mock:
+            mock.get("https://manastack.com/api/deck/list?slug=test-426", json=payload)
+            decklist = ManaStack.retrieve_card_list(self.Decks.MANASTACK.value)
+        assert decklist == "3 Past in Flames (40K) 206"
+
+    def test_moxfield_includes_printings(self):
+        payload = {
+            "mainboard": {
+                "Brainstorm": {
+                    "quantity": 4,
+                    "card": {"set": "40k", "cn": "192"},
+                },
+                "Delver of Secrets // Insectile Aberration": {
+                    "quantity": 1,
+                    "card": {"set": "mid", "cn": "47"},
+                },
+            },
+            "tokens": [
+                {"layout": "token", "name": "Innistrad Checklist", "set": "isd", "cn": "1"},
+            ],
+        }
+        with requests_mock.Mocker() as mock:
+            mock.get(
+                "https://api.moxfield.com/v2/decks/all/D42-or9pCk-uMi4XzRDziQ",
+                json=payload,
+            )
+            decklist = Moxfield.retrieve_card_list(self.Decks.MOXFIELD.value)
+        assert Counter(decklist.splitlines()) == Counter(
+            [
+                "4 Brainstorm (40K) 192",
+                "1 Delver of Secrets (MID) 47",
+                "t:Innistrad Checklist",
+            ]
+        )
+
+    def test_scryfall_includes_printings(self):
+        csv_body = (
+            "section,count,name,set_code,collector_number\n"
+            "mainboard,4,Brainstorm,afc,79\n"
+            "mainboard,1,Delver of Secrets // Insectile Aberration,mid,47\n"
+        )
+        with requests_mock.Mocker() as mock:
+            mock.get(
+                "https://api.scryfall.com/decks/71bb2d40-c922-4a01-a63e-7ba2dde29a5c/export/csv",
+                text=csv_body,
+            )
+            decklist = Scryfall.retrieve_card_list(self.Decks.SCRYFALL.value)
+        assert decklist.splitlines() == [
+            "4 Brainstorm (AFC) 79",
+            "1 Delver of Secrets (MID) 47",
+        ]
 
     @dataclass
     class TestCard:
