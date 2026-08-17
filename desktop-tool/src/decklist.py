@@ -11,6 +11,7 @@ from src.constants import (
     CARD_TYPE_PREFIXES,
     CardTypes,
     DECKLIST_EXCLUDED_TXT_NAMES,
+    DEFAULT_DECKLIST_FILENAME,
     FACE_SEPARATOR,
 )
 from src.exc import ValidationException
@@ -133,10 +134,38 @@ def discover_decklist_paths(working_directory: str) -> list[str]:
     return paths
 
 
+def prompt_for_missing_decklist(working_directory: str) -> str:
+    dest = os.path.join(working_directory, DEFAULT_DECKLIST_FILENAME)
+    print(
+        f"No decklist was found in {bold(working_directory)}.\n"
+        f"Paste your decklist below, then enter a blank line when you are done.\n"
+        f"It will be saved as {bold(DEFAULT_DECKLIST_FILENAME)}."
+    )
+    lines: list[str] = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "":
+            if lines:
+                break
+            continue
+        lines.append(line)
+
+    text = "\n".join(lines).strip()
+    if not parse_decklist_text(text):
+        raise ValidationException("The pasted decklist did not contain any cards.")
+    with open(dest, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
+    logger.info(f"Saved decklist to {bold(dest)}.")
+    return dest
+
+
 def select_decklist_paths(working_directory: str) -> list[str]:
     paths = discover_decklist_paths(working_directory=working_directory)
     if not paths:
-        return []
+        return [prompt_for_missing_decklist(working_directory=working_directory)]
     if len(paths) == 1:
         return paths
 

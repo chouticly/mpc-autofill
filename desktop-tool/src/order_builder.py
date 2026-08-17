@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
+from typing import Optional
 
+from InquirerPy import prompt
 from sanitize_filename import sanitize
 
 from src.constants import DEFAULT_CARDBACK_DRIVE_ID, Cardstocks, Faces, SourceType
@@ -79,11 +81,53 @@ def _common_cardback(working_directory: str, local_art: LocalArtIndex, slots: se
     )
 
 
+def parse_cardstock(stock: str) -> str:
+    for cardstock in Cardstocks:
+        if stock in {cardstock.name, cardstock.value}:
+            return cardstock.value
+    raise ValidationException(f"Order cardstock {stock} not supported!")
+
+
+def prompt_cardstock_and_foil(stock: Optional[str] = None, foil: Optional[bool] = None) -> tuple[str, bool]:
+    if stock is None:
+        answers = prompt(
+            {
+                "type": "list",
+                "name": "stock",
+                "message": "Which cardstock would you like?",
+                "choices": [cardstock.value for cardstock in Cardstocks],
+                "default": Cardstocks.S30.value,
+            }
+        )
+        stock = answers["stock"]
+    stock_value = parse_cardstock(stock)
+
+    if foil is None:
+        if stock_value == Cardstocks.P10.value:
+            foil = False
+        else:
+            answers = prompt(
+                {
+                    "type": "confirm",
+                    "name": "foil",
+                    "message": "Would you like this order to be foil?",
+                    "default": False,
+                }
+            )
+            foil = bool(answers["foil"])
+
+    if stock_value == Cardstocks.P10.value and foil:
+        raise ValidationException(f"Order cardstock {stock_value} is not supported in foil!")
+    return stock_value, foil
+
+
 def build_order_from_entries(
     entries: list[DecklistEntry],
     working_directory: str,
     local_art: LocalArtIndex,
     name: str,
+    stock: str = Cardstocks.S30.value,
+    foil: bool = False,
 ) -> CardOrder:
     used_local_paths: set[str] = set()
     if local_art.cardback_path is not None:
@@ -154,8 +198,8 @@ def build_order_from_entries(
         name=name,
         details=Details(
             quantity=quantity,
-            stock=Cardstocks.S30.value,
-            foil=False,
+            stock=stock,
+            foil=foil,
             allowed_to_exceed_project_max_size=True,
         ),
         fronts=front_collection,
@@ -163,10 +207,13 @@ def build_order_from_entries(
     )
 
 
-def orders_from_decklists_in_folder(working_directory: str) -> list[CardOrder]:
+def orders_from_decklists_in_folder(
+    working_directory: str,
+    stock: Optional[str] = None,
+    foil: Optional[bool] = None,
+) -> list[CardOrder]:
     paths = select_decklist_paths(working_directory=working_directory)
-    if not paths:
-        return []
+    stock_value, foil_value = prompt_cardstock_and_foil(stock=stock, foil=foil)
 
     local_art = index_local_art(working_directory=working_directory)
     orders: list[CardOrder] = []
@@ -177,6 +224,8 @@ def orders_from_decklists_in_folder(working_directory: str) -> list[CardOrder]:
             working_directory=working_directory,
             local_art=local_art,
             name=Path(path).stem,
+            stock=stock_value,
+            foil=foil_value,
         )
         logger.info(order.get_overview())
         orders.append(order)

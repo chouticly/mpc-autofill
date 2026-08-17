@@ -24,13 +24,13 @@ from typing import Optional, Union
 import click
 from wakepy import keepawake
 
-from src.constants import Browsers, ImageResizeMethods, TargetSites
+from src.constants import Browsers, Cardstocks, ImageResizeMethods, TargetSites
 from src.driver import AutofillDriver
 from src.exc import ValidationException
 from src.formatting import bold
 from src.io import DEFAULT_WORKING_DIRECTORY, create_image_directory_if_not_exists
 from src.logging import configure_loggers, logger
-from src.order import CardOrder, aggregate_and_split_orders
+from src.order import aggregate_and_split_orders
 from src.order_builder import orders_from_decklists_in_folder
 from src.pdf_maker import PdfExporter
 from src.processing import ImagePostProcessingConfig
@@ -49,7 +49,7 @@ def prompt_if_no_arguments(prompt: str) -> Union[str, bool]:
 
 
 @click.command(context_settings={"show_default": True})
-@click.option("-d", "--directory", default=None, help="The directory to search for order XML files.")
+@click.option("-d", "--directory", default=None, help="The directory to search for decklist text files.")
 @click.option(
     "-b",
     "--browser",
@@ -129,6 +129,17 @@ def prompt_if_no_arguments(prompt: str) -> Union[str, bool]:
     ),
 )
 @click.option(
+    "--stock",
+    default=None,
+    type=click.Choice([cardstock.name for cardstock in Cardstocks], case_sensitive=False),
+    help="Cardstock for the order. If omitted, the tool will ask.",
+)
+@click.option(
+    "--foil/--no-foil",
+    default=None,
+    help="Whether the order should be foil. If omitted, the tool will ask.",
+)
+@click.option(
     "--combine-orders/--no-combine-orders",
     default=True,
     help="If True, compatible orders will be combined into a single order where possible.",
@@ -179,6 +190,8 @@ def main(
     combine_orders: bool,
     log_level: str,
     write_debug_logs: bool,
+    stock: Optional[str],
+    foil: Optional[bool],
     # convert_to_jpeg: bool,
 ) -> None:
     working_directory: str = DEFAULT_WORKING_DIRECTORY
@@ -214,16 +227,13 @@ def main(
                 if image_post_processing
                 else None
             )
+            orders = orders_from_decklists_in_folder(
+                working_directory=working_directory, stock=stock, foil=foil
+            )
             if exportpdf:
-                orders = orders_from_decklists_in_folder(working_directory=working_directory)
-                if not orders:
-                    orders = CardOrder.from_xmls_in_folder(working_directory=working_directory)
                 PdfExporter(order=orders[0]).execute(post_processing_config=post_processing_config)
             else:
                 target_site = TargetSites[site]
-                orders = orders_from_decklists_in_folder(working_directory=working_directory)
-                if not orders:
-                    orders = CardOrder.from_xmls_in_folder(working_directory=working_directory)
                 card_orders = aggregate_and_split_orders(
                     orders=orders,
                     target_site=target_site,
@@ -246,7 +256,7 @@ def main(
                     f"Press {bold('Enter')} to close this window - your browser window will remain open.\n"
                 )
     except ValidationException as e:
-        input(f"There was a problem with your order file:\n\n{bold(e)}\n\nPress Enter to exit.")
+        input(f"There was a problem with your order:\n\n{bold(e)}\n\nPress Enter to exit.")
         sys.exit(0)
     except Exception as e:
         logger.exception("Uncaught exception")

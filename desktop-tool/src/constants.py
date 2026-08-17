@@ -32,6 +32,7 @@ CARD_TYPE_PREFIXES: dict[str, str] = {
 FACE_SEPARATOR = "//"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 DECKLIST_EXCLUDED_TXT_NAMES = {"autofill_log.txt"}
+DEFAULT_DECKLIST_FILENAME = "decklist.txt"
 CARDBACK_FILENAMES = {"cardback"}
 
 # Default common cardback used for every slot in decklist mode (MPC Autofill community back)

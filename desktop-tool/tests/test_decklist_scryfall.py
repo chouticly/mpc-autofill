@@ -8,7 +8,9 @@ from PIL import Image
 
 from src.constants import (
     DEFAULT_CARDBACK_DRIVE_ID,
+    DEFAULT_DECKLIST_FILENAME,
     CardTypes,
+    Cardstocks,
     ImageResizeMethods,
     MPC_BLEED_HEIGHT_AT_300_DPI,
     MPC_BLEED_WIDTH_AT_300_DPI,
@@ -21,10 +23,17 @@ from src.decklist import (
     normalise_card_name,
     parse_decklist_line,
     parse_decklist_text,
+    prompt_for_missing_decklist,
+    select_decklist_paths,
 )
 from src.exc import ValidationException
 from src.local_art import index_local_art, require_cardback
-from src.order_builder import build_order_from_entries
+from src.order_builder import (
+    build_order_from_entries,
+    orders_from_decklists_in_folder,
+    parse_cardstock,
+    prompt_cardstock_and_foil,
+)
 from src.processing import ImagePostProcessingConfig, post_process_image, target_dimensions
 from src.scryfall import ScryfallCardImages, ScryfallFaceImages, resolve_face
 
@@ -347,6 +356,72 @@ def test_all_slots_share_one_cardback(tmp_path: Path):
     assert cardback.slots == {0, 1, 2}
     assert not any("Insectile" in (card.name or "") for card in order.backs.cards_by_id.values())
     assert not any("Insectile" in (card.name or "") for card in order.fronts.cards_by_id.values())
+
+
+def test_build_order_uses_requested_stock_and_foil(tmp_path: Path):
+    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "cards").mkdir()
+    order = build_order_from_entries(
+        entries=[DecklistEntry(quantity=1, front=DecklistFace(name="Sol Ring"))],
+        working_directory=str(tmp_path),
+        local_art=index_local_art(str(tmp_path)),
+        name="foil-order",
+        stock=Cardstocks.S33.value,
+        foil=True,
+    )
+    assert order.details.stock == Cardstocks.S33.value
+    assert order.details.foil is True
+
+
+def test_parse_cardstock_accepts_name_or_value():
+    assert parse_cardstock("S30") == Cardstocks.S30.value
+    assert parse_cardstock(Cardstocks.M31.value) == Cardstocks.M31.value
+
+
+def test_prompt_cardstock_and_foil_skips_when_provided():
+    stock, foil = prompt_cardstock_and_foil(stock="S27", foil=True)
+    assert stock == Cardstocks.S27.value
+    assert foil is True
+
+
+def test_plastic_cardstock_cannot_be_foil():
+    with pytest.raises(ValidationException, match="foil"):
+        prompt_cardstock_and_foil(stock="P10", foil=True)
+
+
+def test_plastic_cardstock_skips_foil_prompt():
+    stock, foil = prompt_cardstock_and_foil(stock="P10", foil=None)
+    assert stock == Cardstocks.P10.value
+    assert foil is False
+
+
+def test_prompt_for_missing_decklist_writes_decklist_txt(tmp_path: Path, monkeypatch):
+    answers = iter(["1 Sol Ring", "2 Lightning Bolt", ""])
+    monkeypatch.setattr("builtins.input", lambda: next(answers))
+    path = prompt_for_missing_decklist(str(tmp_path))
+    assert os.path.basename(path) == DEFAULT_DECKLIST_FILENAME
+    text = Path(path).read_text(encoding="utf-8")
+    assert "Sol Ring" in text
+    assert "Lightning Bolt" in text
+
+
+def test_select_decklist_paths_prompts_when_missing(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        "src.decklist.prompt_for_missing_decklist",
+        lambda working_directory: os.path.join(working_directory, DEFAULT_DECKLIST_FILENAME),
+    )
+    paths = select_decklist_paths(str(tmp_path))
+    assert paths == [os.path.join(str(tmp_path), DEFAULT_DECKLIST_FILENAME)]
+
+
+def test_orders_from_decklist_without_prompting(tmp_path: Path):
+    (tmp_path / "deck.txt").write_text("1 Sol Ring\n", encoding="utf-8")
+    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "cards").mkdir()
+    orders = orders_from_decklists_in_folder(str(tmp_path), stock="S30", foil=False)
+    assert len(orders) == 1
+    assert orders[0].details.stock == Cardstocks.S30.value
+    assert orders[0].details.foil is False
 
 
 # endregion
