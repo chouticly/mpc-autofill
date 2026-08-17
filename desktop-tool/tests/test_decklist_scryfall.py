@@ -75,6 +75,15 @@ def test_parse_dual_face():
     assert entry.back.name == "Insectile Aberration"
 
 
+def test_parse_explicit_cardback_prefix():
+    entry = parse_decklist_line("1 Lightning Bolt // b: Custom Back")
+    assert entry is not None
+    assert entry.front.name == "Lightning Bolt"
+    assert entry.back is not None
+    assert entry.back.name == "Custom Back"
+    assert entry.back.card_type == CardTypes.CARDBACK
+
+
 def test_parse_ignores_section_headers_and_comments():
     text = """
     Deck
@@ -246,6 +255,97 @@ def test_build_order_local_override_and_unmatched_custom(tmp_path: Path):
 
     sol_ring = next(card for card in order.fronts.cards_by_id.values() if card.name == "Sol Ring.png")
     assert sol_ring.slots == {0, 1}
+
+    cardback = next(card for card in order.backs.cards_by_id.values() if card.name == "cardback.png")
+    assert cardback.slots == {0, 1, 2, 3}
+    assert cardback.source_type == SourceType.LOCAL_FILE
+    assert cardback.query == "cardback"
+    assert not any(card.name == "cardback.png" for card in order.fronts.cards_by_id.values())
+
+
+def test_common_cardback_is_required(tmp_path: Path):
+    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "cards").mkdir()
+    entries = [DecklistEntry(quantity=1, front=DecklistFace(name="Sol Ring"))]
+    with pytest.raises(ValidationException, match="cardback"):
+        build_order_from_entries(
+            entries=entries,
+            working_directory=str(tmp_path),
+            local_art=index_local_art(str(tmp_path)),
+            name="no-back",
+        )
+
+
+def test_jpeg_cardback_fills_all_slots(tmp_path: Path):
+    (tmp_path / "cardback.jpg").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "cards").mkdir()
+    entries = [DecklistEntry(quantity=3, front=DecklistFace(name="Sol Ring"))]
+    order = build_order_from_entries(
+        entries=entries,
+        working_directory=str(tmp_path),
+        local_art=index_local_art(str(tmp_path)),
+        name="jpg-back",
+    )
+    assert len(order.backs.cards_by_id) == 1
+    cardback = next(iter(order.backs.cards_by_id.values()))
+    assert cardback.name == "cardback.jpg"
+    assert cardback.slots == {0, 1, 2}
+
+
+def test_explicit_and_dfc_backs_do_not_use_common_cardback(tmp_path: Path):
+    (tmp_path / "cardback.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "Custom Back.png").write_bytes(_png_bytes(20, 30))
+    (tmp_path / "cards").mkdir()
+
+    entries = [
+        DecklistEntry(quantity=1, front=DecklistFace(name="Sol Ring")),
+        DecklistEntry(
+            quantity=1,
+            front=DecklistFace(name="Lightning Bolt"),
+            back=DecklistFace(name="Custom Back", card_type=CardTypes.CARDBACK),
+        ),
+        DecklistEntry(quantity=1, front=DecklistFace(name="Delver of Secrets")),
+    ]
+    bolt = ScryfallCardImages(
+        name="Lightning Bolt",
+        scryfall_id="bolt-id",
+        faces=[ScryfallFaceImages(name="Lightning Bolt", png_url="https://example.com/bolt.png")],
+    )
+    delver = ScryfallCardImages(
+        name="Delver of Secrets // Insectile Aberration",
+        scryfall_id="dfc-id",
+        faces=[
+            ScryfallFaceImages(name="Delver of Secrets", png_url="https://example.com/delver.png"),
+            ScryfallFaceImages(name="Insectile Aberration", png_url="https://example.com/insect.png"),
+        ],
+    )
+
+    def fake_resolve(face: DecklistFace) -> ScryfallCardImages:
+        if face.name == "Lightning Bolt":
+            return bolt
+        if face.name == "Delver of Secrets":
+            return delver
+        raise AssertionError(f"unexpected Scryfall lookup: {face.name}")
+
+    with patch("src.order_builder.resolve_face", side_effect=fake_resolve):
+        order = build_order_from_entries(
+            entries=entries,
+            working_directory=str(tmp_path),
+            local_art=index_local_art(str(tmp_path)),
+            name="mixed-backs",
+        )
+
+    backs_by_slot: dict[int, str] = {}
+    for card in order.backs.cards_by_id.values():
+        for slot in card.slots:
+            backs_by_slot[slot] = card.name
+    assert backs_by_slot[0] == "cardback.png"
+    assert backs_by_slot[1] == "Custom Back.png"
+    assert "Insectile Aberration" in backs_by_slot[2]
+    assert set(range(order.details.quantity)) == set(backs_by_slot)
+    assert not any(card.name == "Custom Back.png" for card in order.fronts.cards_by_id.values())
 
 
 # endregion
