@@ -10,10 +10,37 @@ class SourceType:
     AWS_S3 = "AWS S3"
     GOOGLE_DRIVE = "Google Drive"
     LOCAL_FILE = "Local File"
+    SCRYFALL = "Scryfall"
 
     @staticmethod
     def get_all() -> list[str]:
-        return [SourceType.AWS_S3, SourceType.GOOGLE_DRIVE, SourceType.LOCAL_FILE]
+        return [SourceType.AWS_S3, SourceType.GOOGLE_DRIVE, SourceType.LOCAL_FILE, SourceType.SCRYFALL]
+
+
+class CardTypes:
+    CARD = "card"
+    TOKEN = "token"
+    CARDBACK = "cardback"
+
+
+CARD_TYPE_PREFIXES: dict[str, str] = {
+    "": CardTypes.CARD,
+    "t": CardTypes.TOKEN,
+    "b": CardTypes.CARDBACK,
+}
+
+FACE_SEPARATOR = "//"
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+DECKLIST_EXCLUDED_TXT_NAMES = {"autofill_log.txt"}
+CARDBACK_FILENAMES = {"cardback"}
+
+SCRYFALL_API_BASE = "https://api.scryfall.com"
+SCRYFALL_USER_AGENT = "mpc-autofill-desktop/1.0"
+SCRYFALL_ACCEPT = "application/json"
+
+# MPC card with bleed: height 1110 px ≈ 300 DPI; width follows 63×88 mm + bleed
+MPC_BLEED_WIDTH_AT_300_DPI = 816
+MPC_BLEED_HEIGHT_AT_300_DPI = 1110
 
 
 class OrderFulfilmentMethod(StrEnum):

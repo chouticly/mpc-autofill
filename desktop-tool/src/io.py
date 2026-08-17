@@ -170,6 +170,17 @@ def remove_files(file_list: list[str]) -> None:
 # region mixed network and file IO
 
 
+def _write_image_bytes(
+    file_bytes: bytes, file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]
+) -> None:
+    if post_processing_config is not None:
+        processed_image = post_process_image(raw_image=file_bytes, config=post_processing_config)
+        processed_image.save(file_path)
+    else:
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+
+
 def download_google_drive_file(
     drive_id: str, file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]
 ) -> bool:
@@ -194,13 +205,45 @@ def download_google_drive_file(
 
     if post_processing_config is not None:
         logger.debug(f"Post-processing {drive_id}...")
-        processed_image = post_process_image(raw_image=file_bytes, config=post_processing_config)
-        processed_image.save(file_path)
-    else:
-        # Save the bytes directly to disk - avoid reading in pillow in case any quality degradation occurs
-        with open(file_path, "wb") as f:
-            f.write(file_bytes)
+    _write_image_bytes(file_bytes=file_bytes, file_path=file_path, post_processing_config=post_processing_config)
     logger.debug(f"Finished downloading Google Drive image {drive_id}!")
+    return True
+
+
+def materialise_local_image(
+    source_path: str, file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]
+) -> bool:
+    """
+    Copy (and optionally post-process) a local image from `source_path` to `file_path`.
+    When source and destination are the same path and post-processing is disabled, this is a no-op.
+    """
+
+    if not file_exists(source_path):
+        return False
+
+    if os.path.abspath(source_path) == os.path.abspath(file_path) and post_processing_config is None:
+        return True
+
+    with open(source_path, "rb") as f:
+        file_bytes = f.read()
+    _write_image_bytes(file_bytes=file_bytes, file_path=file_path, post_processing_config=post_processing_config)
+    return True
+
+
+def download_scryfall_file(
+    png_url: str, file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]
+) -> bool:
+    from src.scryfall import download_png
+
+    try:
+        file_bytes = download_png(png_url)
+    except Exception:
+        logger.exception(f"Failed to download Scryfall image {png_url}")
+        return False
+
+    if post_processing_config is not None:
+        logger.debug(f"Post-processing Scryfall image {png_url}...")
+    _write_image_bytes(file_bytes=file_bytes, file_path=file_path, post_processing_config=post_processing_config)
     return True
 
 

@@ -31,6 +31,7 @@ from src.formatting import bold
 from src.io import DEFAULT_WORKING_DIRECTORY, create_image_directory_if_not_exists
 from src.logging import configure_loggers, logger
 from src.order import CardOrder, aggregate_and_split_orders
+from src.order_builder import orders_from_decklists_in_folder
 from src.pdf_maker import PdfExporter
 from src.processing import ImagePostProcessingConfig
 from src.web_server import WebServer
@@ -214,13 +215,17 @@ def main(
                 else None
             )
             if exportpdf:
-                PdfExporter(order=CardOrder.from_xmls_in_folder(working_directory=working_directory)[0]).execute(
-                    post_processing_config=post_processing_config
-                )
+                orders = orders_from_decklists_in_folder(working_directory=working_directory)
+                if not orders:
+                    orders = CardOrder.from_xmls_in_folder(working_directory=working_directory)
+                PdfExporter(order=orders[0]).execute(post_processing_config=post_processing_config)
             else:
                 target_site = TargetSites[site]
+                orders = orders_from_decklists_in_folder(working_directory=working_directory)
+                if not orders:
+                    orders = CardOrder.from_xmls_in_folder(working_directory=working_directory)
                 card_orders = aggregate_and_split_orders(
-                    orders=CardOrder.from_xmls_in_folder(working_directory=working_directory),
+                    orders=orders,
                     target_site=target_site,
                     combine_orders=combine_orders,
                 )

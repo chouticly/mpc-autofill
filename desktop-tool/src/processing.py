@@ -2,7 +2,11 @@ import io
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.constants import DPI_HEIGHT_RATIO, ImageResizeMethods
+from src.constants import (
+    MPC_BLEED_HEIGHT_AT_300_DPI,
+    MPC_BLEED_WIDTH_AT_300_DPI,
+    ImageResizeMethods,
+)
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -12,19 +16,77 @@ if TYPE_CHECKING:
 class ImagePostProcessingConfig:
     max_dpi: int
     downscale_alg: ImageResizeMethods
-    # jpeg: bool
+
+
+def target_dimensions(max_dpi: int) -> tuple[int, int]:
+    scale = max_dpi / 300
+    width = round(MPC_BLEED_WIDTH_AT_300_DPI * scale)
+    height = round(MPC_BLEED_HEIGHT_AT_300_DPI * scale)
+    return width, height
+
+
+def _flatten_alpha(img: "Image.Image") -> "Image.Image":
+    from PIL import Image
+
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+        composited = Image.alpha_composite(background, rgba)
+        return composited.convert("RGB")
+    return img.convert("RGB")
+
+
+def _pad_to_mpc_aspect(img: "Image.Image") -> "Image.Image":
+    """Pad (edge-extend) an image to the MPC card+bleed aspect ratio."""
+    from PIL import Image
+
+    target_ratio = MPC_BLEED_WIDTH_AT_300_DPI / MPC_BLEED_HEIGHT_AT_300_DPI
+    width, height = img.size
+    current_ratio = width / height
+
+    if abs(current_ratio - target_ratio) < 1e-3:
+        return img
+
+    if current_ratio > target_ratio:
+        # Too wide — pad top/bottom
+        new_height = round(width / target_ratio)
+        pad_y = max(0, (new_height - height) // 2)
+        padded = Image.new("RGB", (width, new_height), (0, 0, 0))
+        padded.paste(img, (0, pad_y))
+        # Fill remaining vertical bands by extending edge rows
+        if pad_y > 0:
+            top = img.crop((0, 0, width, 1)).resize((width, pad_y))
+            padded.paste(top, (0, 0))
+            bottom_height = new_height - height - pad_y
+            if bottom_height > 0:
+                bottom = img.crop((0, height - 1, width, height)).resize((width, bottom_height))
+                padded.paste(bottom, (0, height + pad_y))
+        return padded
+
+    # Too tall — pad left/right
+    new_width = round(height * target_ratio)
+    pad_x = max(0, (new_width - width) // 2)
+    padded = Image.new("RGB", (new_width, height), (0, 0, 0))
+    padded.paste(img, (pad_x, 0))
+    if pad_x > 0:
+        left = img.crop((0, 0, 1, height)).resize((pad_x, height))
+        padded.paste(left, (0, 0))
+        right_width = new_width - width - pad_x
+        if right_width > 0:
+            right = img.crop((width - 1, 0, width, height)).resize((right_width, height))
+            padded.paste(right, (width + pad_x, 0))
+    return padded
 
 
 def post_process_image(raw_image: bytes, config: ImagePostProcessingConfig) -> "Image":
     from PIL import Image
 
     img = Image.open(io.BytesIO(raw_image))
+    img = _flatten_alpha(img)
+    img = _pad_to_mpc_aspect(img)
 
-    # downscale the image to `max_dpi`
-    img_dpi = 10 * round(int(img.height) * DPI_HEIGHT_RATIO / 10)
-    if img_dpi > config.max_dpi:
-        new_height = round((config.max_dpi / img_dpi) * img.height)
-        new_width = round((config.max_dpi / img_dpi) * img.width)
-        img = img.resize((new_width, new_height), config.downscale_alg.value)
+    target_width, target_height = target_dimensions(config.max_dpi)
+    if img.size != (target_width, target_height):
+        img = img.resize((target_width, target_height), config.downscale_alg.value)
 
     return img

@@ -561,7 +561,12 @@ def test_download_google_drive_image_default_post_processing(
     )
     assert image_valid_google_drive.file_exists() is True
     assert image_valid_google_drive.errored is False
-    assert_file_size(image_valid_google_drive.file_path, 152990)
+    from PIL import Image
+
+    from src.processing import target_dimensions
+
+    with Image.open(image_valid_google_drive.file_path) as img:
+        assert img.size == target_dimensions(800)
 
 
 def test_download_local_file_is_no_op(image_local_file: CardImage, counter: Counter, queue: Queue[CardImage]):
@@ -585,7 +590,12 @@ def test_download_google_drive_image_downscaled(
     )
     assert image_valid_google_drive.file_exists() is True
     assert image_valid_google_drive.errored is False
-    assert_file_size(image_valid_google_drive.file_path, 51123)
+    from PIL import Image
+
+    from src.processing import target_dimensions
+
+    with Image.open(image_valid_google_drive.file_path) as img:
+        assert img.size == target_dimensions(100)
 
 
 def test_download_google_drive_image_no_post_processing(
