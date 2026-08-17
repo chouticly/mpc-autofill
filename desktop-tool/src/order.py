@@ -22,9 +22,11 @@ from src.exc import ValidationException
 from src.formatting import bold, text_to_set
 from src.io import (
     download_google_drive_file,
+    download_scryfall_file,
     file_exists,
     get_google_drive_file_name,
     get_image_directory,
+    materialise_local_image,
 )
 from src.logging import logger
 from src.processing import ImagePostProcessingConfig
@@ -85,7 +87,7 @@ class CardImage:
         if not self.name:
             self.retrieve_card_name()
 
-        if self.source_type == SourceType.GOOGLE_DRIVE:
+        if self.source_type in {SourceType.GOOGLE_DRIVE, SourceType.SCRYFALL}:
             if self.name is None:
                 if self.drive_id:
                     # assume png
@@ -100,7 +102,9 @@ class CardImage:
                     self.file_path = None
             else:
                 file_path = os.path.join(image_directory, sanitize(self.name))
-                if not os.path.isfile(file_path) or os.path.getsize(file_path) <= 0:
+                if self.source_type == SourceType.GOOGLE_DRIVE and (
+                    not os.path.isfile(file_path) or os.path.getsize(file_path) <= 0
+                ):
                     # The filepath without ID in parentheses doesn't exist - change the filepath to contain the ID instead
                     name_split = self.name.rsplit(".", 1)
                     file_path = os.path.join(
@@ -180,6 +184,24 @@ class CardImage:
     ) -> None:
         try:
             if self.source_type == SourceType.LOCAL_FILE:
+                source_path = self.drive_id if file_exists(self.drive_id) else self.file_path
+                if (
+                    source_path
+                    and self.file_path is not None
+                    and not self.errored
+                    and (
+                        not self.file_exists()
+                        or (
+                            post_processing_config is not None
+                            and os.path.abspath(source_path) != os.path.abspath(self.file_path)
+                        )
+                    )
+                ):
+                    self.errored = not materialise_local_image(
+                        source_path=source_path,
+                        file_path=self.file_path,
+                        post_processing_config=post_processing_config,
+                    )
                 if self.file_exists() and not self.errored:
                     self.downloaded = True
                 else:
@@ -196,6 +218,19 @@ class CardImage:
                     logger.info(
                         f"Failed to download '{bold(self.name)}' - allocated to slot/s {bold(sorted(self.slots))}.\n"
                         f"Download link - {bold(f'https://drive.google.com/uc?id={self.drive_id}&export=download')}\n"
+                    )
+            elif self.source_type == SourceType.SCRYFALL:
+                if not self.file_exists() and not self.errored and self.file_path is not None:
+                    self.errored = not download_scryfall_file(
+                        png_url=self.drive_id, file_path=self.file_path, post_processing_config=post_processing_config
+                    )
+                if self.file_exists() and not self.errored:
+                    self.downloaded = True
+                else:
+                    logger.info(
+                        f"Failed to download '{bold(self.name)}' from Scryfall - "
+                        f"allocated to slot/s {bold(sorted(self.slots))}.\n"
+                        f"Download link - {bold(self.drive_id)}\n"
                     )
         except Exception as e:
             # note: python threads die silently if they encounter an exception. if an exception does occur,
