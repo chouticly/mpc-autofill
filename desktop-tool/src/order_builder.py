@@ -3,12 +3,12 @@ from pathlib import Path
 
 from sanitize_filename import sanitize
 
-from src.constants import Cardstocks, Faces, SourceType
+from src.constants import DEFAULT_CARDBACK_DRIVE_ID, Cardstocks, Faces, SourceType
 from src.decklist import DecklistEntry, DecklistFace, parse_decklist_file, select_decklist_paths
 from src.exc import ValidationException
 from src.formatting import bold
 from src.io import get_image_directory
-from src.local_art import LocalArtIndex, index_local_art, require_cardback
+from src.local_art import LocalArtIndex, index_local_art
 from src.logging import logger
 from src.order import CardImage, CardImageCollection, CardOrder, Details
 from src.scryfall import ScryfallCardImages, resolve_face
@@ -58,17 +58,38 @@ def _slots_for_quantity(start_slot: int, quantity: int) -> set[int]:
     return set(range(start_slot, start_slot + quantity))
 
 
+def _common_cardback(working_directory: str, local_art: LocalArtIndex, slots: set[int]) -> CardImage:
+    if local_art.cardback_path is not None:
+        return _local_card_image(
+            working_directory=working_directory, path=local_art.cardback_path, slots=slots, query="cardback"
+        )
+
+    image_directory = get_image_directory(working_directory=working_directory)
+    name = "cardback.png"
+    logger.info(
+        f"No local cardback image found; using the default MPC Autofill cardback ({bold(DEFAULT_CARDBACK_DRIVE_ID)})."
+    )
+    return CardImage(
+        drive_id=DEFAULT_CARDBACK_DRIVE_ID,
+        source_type=SourceType.GOOGLE_DRIVE,
+        slots=slots,
+        name=name,
+        file_path=os.path.join(image_directory, name),
+        query="cardback",
+    )
+
+
 def build_order_from_entries(
     entries: list[DecklistEntry],
     working_directory: str,
     local_art: LocalArtIndex,
     name: str,
 ) -> CardOrder:
-    cardback_path = require_cardback(local_art)
-    used_local_paths: set[str] = {os.path.abspath(cardback_path)}
+    used_local_paths: set[str] = set()
+    if local_art.cardback_path is not None:
+        used_local_paths.add(os.path.abspath(local_art.cardback_path))
 
     fronts: dict[str, CardImage] = {}
-    backs: dict[str, CardImage] = {}
     next_slot = 0
 
     for entry in entries:
@@ -98,45 +119,6 @@ def build_order_from_entries(
                     unique_key=f"{scryfall_card.scryfall_id}-0",
                 ),
             )
-            # Auto-back for DFCs when the decklist did not specify an explicit back
-            if entry.back is None and len(scryfall_card.faces) > 1:
-                back_face = scryfall_card.faces[1]
-                _append_card(
-                    backs,
-                    _scryfall_card_image(
-                        working_directory=working_directory,
-                        png_url=back_face.png_url,
-                        card_name=back_face.name,
-                        slots=slots,
-                        query=back_face.name,
-                        unique_key=f"{scryfall_card.scryfall_id}-1",
-                    ),
-                )
-
-        if entry.back is not None:
-            local_back = local_art.find(entry.back.name)
-            if local_back is not None:
-                used_local_paths.add(os.path.abspath(local_back))
-                _append_card(
-                    backs,
-                    _local_card_image(
-                        working_directory=working_directory, path=local_back, slots=slots, query=entry.back.name
-                    ),
-                )
-            else:
-                scryfall_back = _resolve_face_images(entry.back)
-                back_face = scryfall_back.faces[0]
-                _append_card(
-                    backs,
-                    _scryfall_card_image(
-                        working_directory=working_directory,
-                        png_url=back_face.png_url,
-                        card_name=back_face.name,
-                        slots=slots,
-                        query=entry.back.name,
-                        unique_key=f"{scryfall_back.scryfall_id}-0",
-                    ),
-                )
 
     for custom_path in local_art.unused_images(used_local_paths):
         slots = {next_slot}
@@ -154,18 +136,14 @@ def build_order_from_entries(
     if quantity <= 0:
         raise ValidationException("Decklist order is empty after resolving cards and custom art.")
 
-    for card in list(fronts.values()) + list(backs.values()):
+    for card in fronts.values():
         card.validate()
 
-    # Fill remaining back slots with the common cardback
-    filled_back_slots = {slot for card in backs.values() for slot in card.slots}
-    missing_back_slots = set(range(quantity)) - filled_back_slots
-    if missing_back_slots:
-        cardback = _local_card_image(
-            working_directory=working_directory, path=cardback_path, slots=missing_back_slots, query="cardback"
-        )
-        cardback.validate()
-        _append_card(backs, cardback)
+    cardback = _common_cardback(
+        working_directory=working_directory, local_art=local_art, slots=set(range(quantity))
+    )
+    cardback.validate()
+    backs = {cardback.drive_id: cardback}
 
     front_collection = CardImageCollection(cards_by_id=fronts, num_slots=quantity, face=Faces.front)
     back_collection = CardImageCollection(cards_by_id=backs, num_slots=quantity, face=Faces.back)

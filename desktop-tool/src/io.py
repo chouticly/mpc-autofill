@@ -181,6 +181,40 @@ def _write_image_bytes(
             f.write(file_bytes)
 
 
+def _google_drive_public_urls(drive_id: str) -> list[str]:
+    return [
+        f"https://drive.google.com/uc?id={drive_id}&export=download",
+        f"https://cdn.mpcautofill.com/images/google_drive/full/{drive_id}.jpg?dpi=1500",
+        f"https://img.mpcautofill.com/{drive_id}-large-google_drive",
+    ]
+
+
+def download_http_image(
+    url: str, file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]
+) -> bool:
+    logger.debug(f"Downloading image from {url}...")
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": constants.SCRYFALL_USER_AGENT, "Accept": "*/*"},
+            timeout=60,
+        )
+    except requests.exceptions.RequestException:
+        logger.exception(f"HTTP error while downloading {url}")
+        return False
+
+    content_type = (response.headers.get("content-type") or "").lower()
+    if response.status_code != 200 or not response.content or "html" in content_type:
+        return False
+
+    if post_processing_config is not None:
+        logger.debug(f"Post-processing {url}...")
+    _write_image_bytes(
+        file_bytes=response.content, file_path=file_path, post_processing_config=post_processing_config
+    )
+    return True
+
+
 def download_google_drive_file(
     drive_id: str, file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]
 ) -> bool:
@@ -190,24 +224,29 @@ def download_google_drive_file(
     """
 
     logger.debug(f"Downloading Google Drive image {drive_id}...")
-    service = find_or_create_google_drive_service()
-    request = service.files().get_media(fileId=drive_id)
-    file = io.BytesIO()
-    downloader = MediaIoBaseDownload(file, request)
     try:
+        service = find_or_create_google_drive_service()
+        request = service.files().get_media(fileId=drive_id)
+        file = io.BytesIO()
+        downloader = MediaIoBaseDownload(file, request)
         done = False
         while done is False:
             _, done = downloader.next_chunk()
         file_bytes = file.getvalue()
-    except HttpError:
-        logger.exception(f"Encountered a HTTP error while downloading Google Drive image {drive_id}")
-        return False
+        if post_processing_config is not None:
+            logger.debug(f"Post-processing {drive_id}...")
+        _write_image_bytes(file_bytes=file_bytes, file_path=file_path, post_processing_config=post_processing_config)
+        logger.debug(f"Finished downloading Google Drive image {drive_id}!")
+        return True
+    except Exception:
+        logger.debug(f"Google Drive API download failed for {drive_id}; trying public URLs.")
 
-    if post_processing_config is not None:
-        logger.debug(f"Post-processing {drive_id}...")
-    _write_image_bytes(file_bytes=file_bytes, file_path=file_path, post_processing_config=post_processing_config)
-    logger.debug(f"Finished downloading Google Drive image {drive_id}!")
-    return True
+    for url in _google_drive_public_urls(drive_id):
+        if download_http_image(url=url, file_path=file_path, post_processing_config=post_processing_config):
+            logger.debug(f"Finished downloading Google Drive image {drive_id} from public URL!")
+            return True
+    logger.exception(f"Failed to download Google Drive image {drive_id}")
+    return False
 
 
 def materialise_local_image(

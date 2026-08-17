@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 
 from src.constants import (
+    DEFAULT_CARDBACK_DRIVE_ID,
     CardTypes,
     ImageResizeMethods,
     MPC_BLEED_HEIGHT_AT_300_DPI,
@@ -263,17 +264,21 @@ def test_build_order_local_override_and_unmatched_custom(tmp_path: Path):
     assert not any(card.name == "cardback.png" for card in order.fronts.cards_by_id.values())
 
 
-def test_common_cardback_is_required(tmp_path: Path):
+def test_default_cardback_used_when_local_file_missing(tmp_path: Path):
     (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
     (tmp_path / "cards").mkdir()
-    entries = [DecklistEntry(quantity=1, front=DecklistFace(name="Sol Ring"))]
-    with pytest.raises(ValidationException, match="cardback"):
-        build_order_from_entries(
-            entries=entries,
-            working_directory=str(tmp_path),
-            local_art=index_local_art(str(tmp_path)),
-            name="no-back",
-        )
+    entries = [DecklistEntry(quantity=2, front=DecklistFace(name="Sol Ring"))]
+    order = build_order_from_entries(
+        entries=entries,
+        working_directory=str(tmp_path),
+        local_art=index_local_art(str(tmp_path)),
+        name="default-back",
+    )
+    assert len(order.backs.cards_by_id) == 1
+    cardback = next(iter(order.backs.cards_by_id.values()))
+    assert cardback.drive_id == DEFAULT_CARDBACK_DRIVE_ID
+    assert cardback.source_type == SourceType.GOOGLE_DRIVE
+    assert cardback.slots == {0, 1}
 
 
 def test_jpeg_cardback_fills_all_slots(tmp_path: Path):
@@ -293,10 +298,9 @@ def test_jpeg_cardback_fills_all_slots(tmp_path: Path):
     assert cardback.slots == {0, 1, 2}
 
 
-def test_explicit_and_dfc_backs_do_not_use_common_cardback(tmp_path: Path):
+def test_all_slots_share_one_cardback(tmp_path: Path):
     (tmp_path / "cardback.png").write_bytes(_png_bytes(20, 30))
     (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
-    (tmp_path / "Custom Back.png").write_bytes(_png_bytes(20, 30))
     (tmp_path / "cards").mkdir()
 
     entries = [
@@ -334,18 +338,15 @@ def test_explicit_and_dfc_backs_do_not_use_common_cardback(tmp_path: Path):
             entries=entries,
             working_directory=str(tmp_path),
             local_art=index_local_art(str(tmp_path)),
-            name="mixed-backs",
+            name="shared-back",
         )
 
-    backs_by_slot: dict[int, str] = {}
-    for card in order.backs.cards_by_id.values():
-        for slot in card.slots:
-            backs_by_slot[slot] = card.name
-    assert backs_by_slot[0] == "cardback.png"
-    assert backs_by_slot[1] == "Custom Back.png"
-    assert "Insectile Aberration" in backs_by_slot[2]
-    assert set(range(order.details.quantity)) == set(backs_by_slot)
-    assert not any(card.name == "Custom Back.png" for card in order.fronts.cards_by_id.values())
+    assert len(order.backs.cards_by_id) == 1
+    cardback = next(iter(order.backs.cards_by_id.values()))
+    assert cardback.name == "cardback.png"
+    assert cardback.slots == {0, 1, 2}
+    assert not any("Insectile" in (card.name or "") for card in order.backs.cards_by_id.values())
+    assert not any("Insectile" in (card.name or "") for card in order.fronts.cards_by_id.values())
 
 
 # endregion

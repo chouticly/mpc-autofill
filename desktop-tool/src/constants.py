@@ -34,6 +34,9 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 DECKLIST_EXCLUDED_TXT_NAMES = {"autofill_log.txt"}
 CARDBACK_FILENAMES = {"cardback"}
 
+# Default common cardback used for every slot in decklist mode (MPC Autofill community back)
+DEFAULT_CARDBACK_DRIVE_ID = "12RJeMQw2E0jEz4SwKJTItoONCeHD7skj"
+
 SCRYFALL_API_BASE = "https://api.scryfall.com"
 SCRYFALL_USER_AGENT = "mpc-autofill-desktop/1.0"
 SCRYFALL_ACCEPT = "application/json"
