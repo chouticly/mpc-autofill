@@ -3,6 +3,10 @@
 # nuitka-project: --include-data-files=post-launch.html=post-launch.html
 # nuitka-project: --noinclude-pytest-mode=nofollow
 # nuitka-project: --windows-icon-from-ico=favicon.ico
+# nuitka-project: --include-package=selenium.webdriver.chrome
+# nuitka-project: --include-package=selenium.webdriver.chromium
+# nuitka-project: --include-package=selenium.webdriver.edge
+# nuitka-project: --include-package=selenium.webdriver.firefox
 # nuitka-project-if: {OS} == "Windows":
 #    nuitka-project: --noinclude-data-files=selenium/webdriver/common/macos/selenium-manager
 #    nuitka-project: --noinclude-data-files=selenium/webdriver/common/linux/selenium-manager
@@ -22,7 +26,6 @@ from contextlib import nullcontext
 from typing import Optional, Union
 
 import click
-from wakepy import keepawake
 
 from src.constants import Browsers, Cardstocks, ImageResizeMethods, TargetSites
 from src.driver import AutofillDriver
@@ -216,7 +219,13 @@ def main(
         stdout_log_level=logging.getLevelName(log_level),
     )
     try:
-        with keepawake(keep_screen_awake=True) if not allowsleep else nullcontext():
+        if allowsleep:
+            sleep_context = nullcontext()
+        else:
+            from wakepy import keepawake
+
+            sleep_context = keepawake(keep_screen_awake=True)
+        with sleep_context:
             logger.info("MPC Autofill desktop tool has successfully initialised!")
             if not allowsleep:
                 logger.info("System sleep is being prevented during this execution.")
