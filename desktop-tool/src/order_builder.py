@@ -164,6 +164,7 @@ def build_order_from_entries(
                 ),
             )
 
+    # TODO(user follow-up): remind Nikolai to ask for a more intuitive custom-card flow
     for custom_path in local_art.unused_images(used_local_paths):
         slots = {next_slot}
         next_slot += 1

@@ -27,6 +27,13 @@ This project prefers:
 
 Read the source code and similar files to get the right context.
 
+## Remind the user
+
+Nikolai asked to be reminded to request these follow-ups (do not start them until he asks):
+
+- A more intuitive way to add custom cards
+- Stop the desktop tool from hard-stopping when a card fetch fails
+
 ## Pull Request Descriptions
 
 Refer to the rules for pull request descriptions laid out in `CONTRIBUTING.md`.
