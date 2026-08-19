@@ -23,13 +23,14 @@ from src.formatting import bold, text_to_set
 from src.io import (
     download_google_drive_file,
     download_scryfall_file,
+    ensure_mpc_print_ready,
     file_exists,
     get_google_drive_file_name,
     get_image_directory,
     materialise_local_image,
 )
 from src.logging import logger
-from src.processing import ImagePostProcessingConfig
+from src.processing import ImagePostProcessingConfig, image_meets_mpc_print_requirements
 from src.utils import unpack_element
 
 
@@ -185,32 +186,41 @@ class CardImage:
         try:
             if self.source_type == SourceType.LOCAL_FILE:
                 source_path = self.drive_id if file_exists(self.drive_id) else self.file_path
+                dest_is_working_copy = (
+                    source_path is not None
+                    and self.file_path is not None
+                    and os.path.abspath(source_path) != os.path.abspath(self.file_path)
+                )
+                dest_needs_refresh = dest_is_working_copy and not image_meets_mpc_print_requirements(
+                    self.file_path or "", post_processing_config
+                )
                 if (
                     source_path
                     and self.file_path is not None
                     and not self.errored
-                    and (
-                        not self.file_exists()
-                        or (
-                            post_processing_config is not None
-                            and os.path.abspath(source_path) != os.path.abspath(self.file_path)
-                        )
-                    )
+                    and (not self.file_exists() or dest_needs_refresh)
                 ):
                     self.errored = not materialise_local_image(
                         source_path=source_path,
                         file_path=self.file_path,
                         post_processing_config=post_processing_config,
                     )
+                    if not self.errored and dest_is_working_copy:
+                        self.errored = not ensure_mpc_print_ready(self.file_path, post_processing_config)
                 if self.file_exists() and not self.errored:
                     self.downloaded = True
                 else:
                     logger.info(f"Local file '{bold(self.name)}' does not exist at path:\n{bold(self.drive_id)}\n")
             elif self.source_type == SourceType.GOOGLE_DRIVE:
-                if not self.file_exists() and not self.errored and self.file_path is not None:
-                    self.errored = not download_google_drive_file(
-                        drive_id=self.drive_id, file_path=self.file_path, post_processing_config=post_processing_config
-                    )
+                if not self.errored and self.file_path is not None:
+                    if not self.file_exists():
+                        self.errored = not download_google_drive_file(
+                            drive_id=self.drive_id,
+                            file_path=self.file_path,
+                            post_processing_config=post_processing_config,
+                        )
+                    if not self.errored:
+                        self.errored = not ensure_mpc_print_ready(self.file_path, post_processing_config)
 
                 if self.file_exists() and not self.errored:
                     self.downloaded = True
@@ -220,10 +230,15 @@ class CardImage:
                         f"Download link - {bold(f'https://drive.google.com/uc?id={self.drive_id}&export=download')}\n"
                     )
             elif self.source_type == SourceType.SCRYFALL:
-                if not self.file_exists() and not self.errored and self.file_path is not None:
-                    self.errored = not download_scryfall_file(
-                        png_url=self.drive_id, file_path=self.file_path, post_processing_config=post_processing_config
-                    )
+                if not self.errored and self.file_path is not None:
+                    if not self.file_exists():
+                        self.errored = not download_scryfall_file(
+                            png_url=self.drive_id,
+                            file_path=self.file_path,
+                            post_processing_config=post_processing_config,
+                        )
+                    if not self.errored:
+                        self.errored = not ensure_mpc_print_ready(self.file_path, post_processing_config)
                 if self.file_exists() and not self.errored:
                     self.downloaded = True
                 else:

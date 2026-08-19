@@ -1,8 +1,12 @@
 import io
+import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 from src.constants import (
+    EMBEDDED_PRINT_DPI,
+    MIN_PRINT_DPI,
     MPC_BLEED_HEIGHT_AT_300_DPI,
     MPC_BLEED_WIDTH_AT_300_DPI,
     ImageResizeMethods,
@@ -23,6 +27,10 @@ def target_dimensions(max_dpi: int) -> tuple[int, int]:
     width = round(MPC_BLEED_WIDTH_AT_300_DPI * scale)
     height = round(MPC_BLEED_HEIGHT_AT_300_DPI * scale)
     return width, height
+
+
+def embedded_file_dpi(max_dpi: int) -> int:
+    return max(max_dpi, EMBEDDED_PRINT_DPI)
 
 
 def _flatten_alpha(img: "Image.Image") -> "Image.Image":
@@ -90,3 +98,36 @@ def post_process_image(raw_image: bytes, config: ImagePostProcessingConfig) -> "
         img = img.resize((target_width, target_height), config.downscale_alg.value)
 
     return img
+
+
+def save_processed_image(img: "Image.Image", file_path: str, dpi: int) -> None:
+    suffix = Path(file_path).suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        img.save(file_path, dpi=(dpi, dpi), quality=95, subsampling=0)
+    else:
+        img.save(file_path, dpi=(dpi, dpi))
+
+
+def _image_dpi_meets_minimum(img: "Image.Image") -> bool:
+    dpi = img.info.get("dpi")
+    if not dpi:
+        return False
+    try:
+        return float(dpi[0]) >= MIN_PRINT_DPI - 0.05 and float(dpi[1]) >= MIN_PRINT_DPI - 0.05
+    except (TypeError, ValueError, IndexError):
+        return False
+
+
+def image_meets_mpc_print_requirements(file_path: str, config: Optional[ImagePostProcessingConfig]) -> bool:
+    if not file_path or not os.path.isfile(file_path) or os.path.getsize(file_path) <= 0:
+        return False
+
+    from PIL import Image
+
+    with Image.open(file_path) as img:
+        min_width, min_height = target_dimensions(MIN_PRINT_DPI)
+        if img.size[0] < min_width or img.size[1] < min_height:
+            return False
+        if config is None:
+            return True
+        return img.size == target_dimensions(config.max_dpi) and _image_dpi_meets_minimum(img)

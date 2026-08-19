@@ -1,6 +1,7 @@
 import io
 import os
 from pathlib import Path
+from queue import Queue
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +35,16 @@ from src.order_builder import (
     parse_cardstock,
     prompt_cardstock_and_foil,
 )
-from src.processing import ImagePostProcessingConfig, post_process_image, target_dimensions
+from src.io import ensure_mpc_print_ready
+from src.order import CardImage
+from src.processing import (
+    ImagePostProcessingConfig,
+    embedded_file_dpi,
+    image_meets_mpc_print_requirements,
+    post_process_image,
+    save_processed_image,
+    target_dimensions,
+)
 from src.scryfall import ScryfallCardImages, ScryfallFaceImages, resolve_face
 
 FILE_PATH = os.path.abspath(os.path.dirname(__file__))
@@ -221,6 +231,49 @@ def test_post_process_downscales_oversized_image():
     config = ImagePostProcessingConfig(max_dpi=100, downscale_alg=ImageResizeMethods.LANCZOS)
     processed = post_process_image(raw_image=raw, config=config)
     assert processed.size == target_dimensions(100)
+
+
+def test_save_processed_image_embeds_print_dpi(tmp_path: Path):
+    raw = _png_bytes(745, 1040, mode="RGBA")
+    config = ImagePostProcessingConfig(max_dpi=800, downscale_alg=ImageResizeMethods.LANCZOS)
+    processed = post_process_image(raw_image=raw, config=config)
+    dest = tmp_path / "card.png"
+    save_processed_image(processed, str(dest), embedded_file_dpi(config.max_dpi))
+    with Image.open(dest) as img:
+        assert img.size == target_dimensions(800)
+        assert min(img.info["dpi"]) >= 300
+    assert image_meets_mpc_print_requirements(str(dest), config)
+
+
+def test_ensure_mpc_print_ready_upscales_cached_scryfall_png(tmp_path: Path):
+    dest = tmp_path / "Aetherflux Reservoir.png"
+    dest.write_bytes(_png_bytes(745, 1040))
+    config = ImagePostProcessingConfig(max_dpi=800, downscale_alg=ImageResizeMethods.LANCZOS)
+    assert not image_meets_mpc_print_requirements(str(dest), config)
+    assert ensure_mpc_print_ready(str(dest), config)
+    with Image.open(dest) as img:
+        assert img.size == target_dimensions(800)
+        assert min(img.info["dpi"]) >= 300
+
+
+def test_download_image_reprocesses_existing_undersized_scryfall_file(tmp_path: Path):
+    dest = tmp_path / "Aetherflux Reservoir (abc-0).png"
+    dest.write_bytes(_png_bytes(745, 1040))
+    card = CardImage(
+        drive_id="https://example.com/aetherflux.png",
+        source_type=SourceType.SCRYFALL,
+        slots={0},
+        name=dest.name,
+        file_path=str(dest),
+    )
+    queue = Queue()
+    config = ImagePostProcessingConfig(max_dpi=800, downscale_alg=ImageResizeMethods.LANCZOS)
+    card.download_image(queue=queue, download_bar=MagicMock(), post_processing_config=config)
+    assert card.downloaded is True
+    assert card.errored is False
+    with Image.open(dest) as img:
+        assert img.size == target_dimensions(800)
+        assert min(img.info["dpi"]) >= 300
 
 
 # endregion
