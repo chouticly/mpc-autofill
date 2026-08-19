@@ -14,7 +14,13 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 import src.constants as constants
 from src.logging import logger
-from src.processing import ImagePostProcessingConfig, post_process_image
+from src.processing import (
+    ImagePostProcessingConfig,
+    embedded_file_dpi,
+    image_meets_mpc_print_requirements,
+    post_process_image,
+    save_processed_image,
+)
 
 thread_local = threading.local()  # Should only be called once per thread
 
@@ -175,10 +181,32 @@ def _write_image_bytes(
 ) -> None:
     if post_processing_config is not None:
         processed_image = post_process_image(raw_image=file_bytes, config=post_processing_config)
-        processed_image.save(file_path)
+        save_processed_image(
+            processed_image, file_path, embedded_file_dpi(post_processing_config.max_dpi)
+        )
     else:
         with open(file_path, "wb") as f:
             f.write(file_bytes)
+
+
+def reprocess_image_file(file_path: str, post_processing_config: ImagePostProcessingConfig) -> bool:
+    if not file_exists(file_path):
+        return False
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+    _write_image_bytes(file_bytes=file_bytes, file_path=file_path, post_processing_config=post_processing_config)
+    return True
+
+
+def ensure_mpc_print_ready(file_path: str, post_processing_config: Optional[ImagePostProcessingConfig]) -> bool:
+    if image_meets_mpc_print_requirements(file_path, post_processing_config):
+        return True
+    fallback = post_processing_config or ImagePostProcessingConfig(
+        max_dpi=constants.MIN_PRINT_DPI, downscale_alg=constants.ImageResizeMethods.LANCZOS
+    )
+    if not reprocess_image_file(file_path, fallback):
+        return False
+    return image_meets_mpc_print_requirements(file_path, fallback)
 
 
 def _google_drive_public_urls(drive_id: str) -> list[str]:

@@ -45,6 +45,9 @@ SCRYFALL_ACCEPT = "application/json"
 # MPC card with bleed: height 1110 px ≈ 300 DPI; width follows 63×88 mm + bleed
 MPC_BLEED_WIDTH_AT_300_DPI = 816
 MPC_BLEED_HEIGHT_AT_300_DPI = 1110
+MIN_PRINT_DPI = 300
+# 304 survives PNG pHYs metre rounding without falling under 300
+EMBEDDED_PRINT_DPI = 304
 
 
 class OrderFulfilmentMethod(StrEnum):

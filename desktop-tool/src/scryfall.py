@@ -89,6 +89,7 @@ def _resolve_token(face: DecklistFace) -> ScryfallCardImages:
 
 def resolve_face(face: DecklistFace) -> ScryfallCardImages:
     """Resolve a decklist face to Scryfall PNG URL(s)."""
+    # TODO(user follow-up): remind Nikolai to ask that missing/failed fetches skip the card instead of aborting
     if face.expansion_code and face.collector_number:
         set_code = face.expansion_code.lower()
         cn = quote(face.collector_number, safe="")

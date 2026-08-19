@@ -265,6 +265,7 @@ def main(
                     f"Press {bold('Enter')} to close this window - your browser window will remain open.\n"
                 )
     except ValidationException as e:
+        # TODO(user follow-up): remind Nikolai to ask that card fetch errors not hard-stop the run
         input(f"There was a problem with your order:\n\n{bold(e)}\n\nPress Enter to exit.")
         sys.exit(0)
     except Exception as e:
