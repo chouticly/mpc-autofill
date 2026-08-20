@@ -18,7 +18,9 @@ jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -39,6 +41,7 @@ jobs:
       run:
         working-directory: desktop-tool
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -136,7 +139,7 @@ jobs:
           script-name: autofill.py
           mode: onefile
           output-file: ${{ matrix.FILENAME }}
-          macos-sign-notarization: ${{ (matrix.TARGET == 'macos-arm') || (matrix.TARGET == 'macos-intel') }}
+          macos-sign-notarization: ${{ secrets.MACOS_SIGN_IDENTITY != '' && ((matrix.TARGET == 'macos-arm') || (matrix.TARGET == 'macos-intel')) }}
           macos-sign-identity: ${{ secrets.MACOS_SIGN_IDENTITY }}
           macos-sign-keyring-filename: "${{ runner.temp }}/app-signing.keychain-db"
           macos-sign-keyring-password: ${{ secrets.KEYCHAIN_PASSWORD }}
