@@ -127,6 +127,7 @@ jobs:
           dir: "desktop-tool/"
       - name: Ensure client_secrets.json exists
         working-directory: desktop-tool
+        shell: bash
         run: |
           if [ ! -s client_secrets.json ]; then
             printf '%s\n' '{"type":"service_account","project_id":"placeholder"}' > client_secrets.json
