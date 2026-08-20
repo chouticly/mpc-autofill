@@ -256,6 +256,15 @@ def test_ensure_mpc_print_ready_upscales_cached_scryfall_png(tmp_path: Path):
         assert min(img.info["dpi"]) >= 300
 
 
+def test_image_meets_requirements_allows_intentional_low_max_dpi(tmp_path: Path):
+    dest = tmp_path / "small.png"
+    config = ImagePostProcessingConfig(max_dpi=100, downscale_alg=ImageResizeMethods.LANCZOS)
+    processed = post_process_image(raw_image=_png_bytes(745, 1040), config=config)
+    save_processed_image(processed, str(dest), embedded_file_dpi(config.max_dpi))
+    assert image_meets_mpc_print_requirements(str(dest), config)
+    assert ensure_mpc_print_ready(str(dest), config)
+
+
 def test_download_image_reprocesses_existing_undersized_scryfall_file(tmp_path: Path):
     dest = tmp_path / "Aetherflux Reservoir (abc-0).png"
     dest.write_bytes(_png_bytes(745, 1040))

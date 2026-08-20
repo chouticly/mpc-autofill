@@ -125,9 +125,12 @@ def image_meets_mpc_print_requirements(file_path: str, config: Optional[ImagePos
     from PIL import Image
 
     with Image.open(file_path) as img:
-        min_width, min_height = target_dimensions(MIN_PRINT_DPI)
-        if img.size[0] < min_width or img.size[1] < min_height:
-            return False
         if config is None:
+            min_width, min_height = target_dimensions(MIN_PRINT_DPI)
+            return img.size[0] >= min_width and img.size[1] >= min_height
+
+        if img.size != target_dimensions(config.max_dpi):
+            return False
+        if config.max_dpi < MIN_PRINT_DPI:
             return True
-        return img.size == target_dimensions(config.max_dpi) and _image_dpi_meets_minimum(img)
+        return _image_dpi_meets_minimum(img)
