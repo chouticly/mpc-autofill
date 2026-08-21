@@ -1,0 +1,22 @@
+{
+  "name": "MPC Autofill",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "Backend - Dev Server",
+      "description": "Django backend API served at http://localhost:8000",
+      "command": "cd MPCAutofill && ./venv/bin/python manage.py runserver 0.0.0.0:8000"
+    },
+    {
+      "name": "Frontend - Dev Server",
+      "description": "Next.js frontend served at http://localhost:3000",
+      "command": "export NVM_DIR=\"$HOME/.nvm\"; . \"$NVM_DIR/nvm.sh\"; nvm use 22.15.1; cd frontend && NEXT_TELEMETRY_DISABLED=1 npm run dev"
+    }
+  ],
+  "ports": [
+    { "name": "frontend", "port": 3000 },
+    { "name": "backend", "port": 8000 }
+  ]
+}
