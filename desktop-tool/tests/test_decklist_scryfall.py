@@ -60,6 +60,20 @@ def _png_bytes(width: int, height: int, mode: str = "RGB", colour=(10, 20, 30)) 
     return buffer.getvalue()
 
 
+def _image_bytes(width: int, height: int, fmt: str, colour=(10, 20, 30)) -> bytes:
+    img = Image.new("RGB", (width, height), colour)
+    buffer = io.BytesIO()
+    img.save(buffer, format=fmt)
+    return buffer.getvalue()
+
+
+def _write_card(cards_dir: Path, name: str, data: bytes) -> Path:
+    cards_dir.mkdir(exist_ok=True)
+    path = cards_dir / name
+    path.write_bytes(data)
+    return path
+
+
 # region decklist parsing
 
 
@@ -137,15 +151,18 @@ def test_discover_decklist_paths_excludes_logs(tmp_path: Path):
 
 
 def test_index_local_art_finds_cardback_and_customs(tmp_path: Path):
-    (tmp_path / "cardback.png").write_bytes(_png_bytes(10, 10))
-    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(10, 10))
-    (tmp_path / "Custom Hero.jpg").write_bytes(_png_bytes(10, 10))
+    cards = tmp_path / "cards"
+    _write_card(cards, "cardback.png", _png_bytes(10, 10))
+    _write_card(cards, "Sol Ring.png", _png_bytes(10, 10))
+    _write_card(cards, "Custom Hero.jpg", _image_bytes(10, 10, "JPEG"))
+    (tmp_path / "Working Custom.png").write_bytes(_png_bytes(10, 10))
     index = index_local_art(str(tmp_path))
     assert require_cardback(index).endswith("cardback.png")
     assert index.find("Sol Ring") is not None
     assert index.find("sol ring") is not None
     unused = index.unused_images({os.path.abspath(index.find("Sol Ring"))})
     assert any(path.endswith("Custom Hero.jpg") for path in unused)
+    assert not any(path.endswith("Working Custom.png") for path in unused)
     assert not any(path.endswith("cardback.png") for path in unused)
 
 
@@ -233,15 +250,19 @@ def test_post_process_downscales_oversized_image():
     assert processed.size == target_dimensions(100)
 
 
-def test_save_processed_image_embeds_print_dpi(tmp_path: Path):
+@pytest.mark.parametrize(
+    "filename,expected_format",
+    [("card.png", "PNG"), ("card.jpg", "JPEG"), ("card.jpeg", "JPEG"), ("card.webp", "WEBP")],
+)
+def test_save_processed_image_embeds_print_dpi(tmp_path: Path, filename: str, expected_format: str):
     raw = _png_bytes(745, 1040, mode="RGBA")
     config = ImagePostProcessingConfig(max_dpi=800, downscale_alg=ImageResizeMethods.LANCZOS)
     processed = post_process_image(raw_image=raw, config=config)
-    dest = tmp_path / "card.png"
+    dest = tmp_path / filename
     save_processed_image(processed, str(dest), embedded_file_dpi(config.max_dpi))
     with Image.open(dest) as img:
+        assert img.format == expected_format
         assert img.size == target_dimensions(800)
-        assert min(img.info["dpi"]) >= 300
     assert image_meets_mpc_print_requirements(str(dest), config)
 
 
@@ -291,10 +312,12 @@ def test_download_image_reprocesses_existing_undersized_scryfall_file(tmp_path: 
 
 
 def test_build_order_local_override_and_unmatched_custom(tmp_path: Path):
-    (tmp_path / "cardback.png").write_bytes(_png_bytes(20, 30))
-    (tmp_path / "Sol Ring.png").write_bytes(_png_bytes(20, 30))
+    cards = tmp_path / "cards"
+    _write_card(cards, "cardback.png", _png_bytes(20, 30))
+    _write_card(cards, "Sol Ring.png", _png_bytes(20, 30))
+    _write_card(cards, "My Custom.png", _png_bytes(20, 30))
     (tmp_path / "My Custom.png").write_bytes(_png_bytes(20, 30))
-    (tmp_path / "cards").mkdir()
+    (tmp_path / "Working Custom.png").write_bytes(_png_bytes(20, 30))
 
     entries = [
         DecklistEntry(quantity=2, front=DecklistFace(name="Sol Ring")),
@@ -322,17 +345,84 @@ def test_build_order_local_override_and_unmatched_custom(tmp_path: Path):
     front_names = {card.name for card in order.fronts.cards_by_id.values()}
     assert "Sol Ring.png" in front_names
     assert "My Custom.png" in front_names
+    assert "Working Custom.png" not in front_names
     assert any(card.source_type == SourceType.SCRYFALL for card in order.fronts.cards_by_id.values())
-    assert any(card.source_type == SourceType.LOCAL_FILE and card.name == "Sol Ring.png" for card in order.fronts.cards_by_id.values())
+    assert any(
+        card.source_type == SourceType.LOCAL_FILE and card.name == "Sol Ring.png"
+        for card in order.fronts.cards_by_id.values()
+    )
 
     sol_ring = next(card for card in order.fronts.cards_by_id.values() if card.name == "Sol Ring.png")
     assert sol_ring.slots == {0, 1}
+    assert sol_ring.file_path.endswith(os.path.join("cards", "Sol Ring.png"))
+
+    custom = next(card for card in order.fronts.cards_by_id.values() if card.name == "My Custom.png")
+    assert custom.source_type == SourceType.LOCAL_FILE
+    assert custom.file_path.endswith(os.path.join("cards", "My Custom.png"))
 
     cardback = next(card for card in order.backs.cards_by_id.values() if card.name == "cardback.png")
     assert cardback.slots == {0, 1, 2, 3}
     assert cardback.source_type == SourceType.LOCAL_FILE
     assert cardback.query == "cardback"
     assert not any(card.name == "cardback.png" for card in order.fronts.cards_by_id.values())
+
+
+def test_cached_download_in_cards_is_not_appended_as_custom(tmp_path: Path):
+    cards = tmp_path / "cards"
+    _write_card(cards, "Sol Ring.png", _png_bytes(20, 30))
+    _write_card(cards, "Lightning Bolt (bolt-id-0).png", _png_bytes(20, 30))
+    order = build_order_from_entries(
+        entries=[DecklistEntry(quantity=1, front=DecklistFace(name="Sol Ring"))],
+        working_directory=str(tmp_path),
+        local_art=index_local_art(str(tmp_path)),
+        name="cached-not-custom",
+    )
+    front_names = {card.name for card in order.fronts.cards_by_id.values()}
+    assert front_names == {"Sol Ring.png"}
+    assert order.details.quantity == 1
+
+
+def test_non_png_customs_are_indexed_and_included(tmp_path: Path):
+    cards = tmp_path / "cards"
+    _write_card(cards, "Hero.jpg", _image_bytes(20, 30, "JPEG"))
+    _write_card(cards, "Token.jpeg", _image_bytes(20, 30, "JPEG"))
+    _write_card(cards, "Ally.webp", _image_bytes(20, 30, "WEBP"))
+    order = build_order_from_entries(
+        entries=[],
+        working_directory=str(tmp_path),
+        local_art=index_local_art(str(tmp_path)),
+        name="non-png-customs",
+    )
+    fronts = list(order.fronts.cards_by_id.values())
+    front_names = {card.name for card in fronts}
+    assert front_names == {"Hero.jpg", "Token.jpeg", "Ally.webp"}
+    assert all(card.source_type == SourceType.LOCAL_FILE for card in fronts)
+    assert all(card.file_path.endswith(os.path.join("cards", card.name)) for card in fronts)
+
+
+@pytest.mark.parametrize(
+    "filename,fmt",
+    [("My Custom.png", "PNG"), ("My Custom.jpg", "JPEG"), ("My Custom.webp", "WEBP")],
+)
+def test_download_local_cards_file_becomes_print_ready(tmp_path: Path, filename: str, fmt: str):
+    dest = _write_card(tmp_path / "cards", filename, _image_bytes(20, 30, fmt))
+    card = CardImage(
+        drive_id=str(dest),
+        source_type=SourceType.LOCAL_FILE,
+        slots={0},
+        name=filename,
+        file_path=str(dest),
+    )
+    queue = Queue()
+    config = ImagePostProcessingConfig(max_dpi=800, downscale_alg=ImageResizeMethods.LANCZOS)
+    card.download_image(queue=queue, download_bar=MagicMock(), post_processing_config=config)
+    assert card.downloaded is True
+    assert card.errored is False
+    with Image.open(dest) as img:
+        assert img.format == fmt
+        assert img.size == target_dimensions(800)
+    assert dest.suffix.lower() == Path(filename).suffix.lower()
+    assert image_meets_mpc_print_requirements(str(dest), config)
 
 
 def test_default_cardback_used_when_local_file_missing(tmp_path: Path):

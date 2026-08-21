@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -7,6 +8,9 @@ from src.constants import CARDBACK_FILENAMES, IMAGE_EXTENSIONS
 from src.decklist import normalise_card_name
 from src.exc import ValidationException
 from src.formatting import bold
+from src.io import get_image_directory
+
+_CACHED_DOWNLOAD_STEM = re.compile(r"^.+ \(.+\)$")
 
 
 @dataclass(frozen=True)
@@ -31,35 +35,52 @@ class LocalArtIndex:
         return unused
 
 
+def _is_cached_download_stem(stem: str) -> bool:
+    return _CACHED_DOWNLOAD_STEM.fullmatch(stem) is not None
+
+
+def _image_files_in(directory: str) -> list[str]:
+    if not os.path.isdir(directory):
+        return []
+    paths: list[str] = []
+    for entry in sorted(os.listdir(directory)):
+        path = os.path.join(directory, entry)
+        if os.path.isfile(path) and Path(entry).suffix.lower() in IMAGE_EXTENSIONS:
+            paths.append(path)
+    return paths
+
+
 def index_local_art(working_directory: str) -> LocalArtIndex:
     by_name: dict[str, str] = {}
-    all_images: list[str] = []
+    custom_paths: list[str] = []
     cardback_path: Optional[str] = None
+    cards_directory = get_image_directory(working_directory)
 
-    for entry in sorted(os.listdir(working_directory)):
-        path = os.path.join(working_directory, entry)
-        if not os.path.isfile(path):
-            continue
-        suffix = Path(entry).suffix.lower()
-        if suffix not in IMAGE_EXTENSIONS:
-            continue
-
-        all_images.append(path)
-        stem = Path(entry).stem
+    def consider(path: str, include_as_custom: bool) -> None:
+        nonlocal cardback_path
+        stem = Path(path).stem
         normalised = normalise_card_name(stem)
         if normalised in CARDBACK_FILENAMES:
-            cardback_path = path
-            continue
-        # First match wins for duplicate stems with different extensions
+            if cardback_path is None:
+                cardback_path = path
+            return
         by_name.setdefault(normalised, path)
+        if include_as_custom and not _is_cached_download_stem(stem):
+            custom_paths.append(path)
 
-    return LocalArtIndex(by_normalised_name=by_name, cardback_path=cardback_path, all_image_paths=all_images)
+    for path in _image_files_in(cards_directory):
+        consider(path, include_as_custom=True)
+    if os.path.abspath(working_directory) != os.path.abspath(cards_directory):
+        for path in _image_files_in(working_directory):
+            consider(path, include_as_custom=False)
+
+    return LocalArtIndex(by_normalised_name=by_name, cardback_path=cardback_path, all_image_paths=custom_paths)
 
 
 def require_cardback(index: LocalArtIndex) -> str:
     if index.cardback_path is None:
         raise ValidationException(
             "Decklist mode requires a common cardback image named "
-            f"{bold('cardback.png')} (or .jpg / .jpeg / .webp) in the working directory."
+            f"{bold('cardback.png')} (or .jpg / .jpeg / .webp) in the cards folder or working directory."
         )
     return index.cardback_path

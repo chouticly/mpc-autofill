@@ -1,4 +1,5 @@
 import os
+import shutil
 import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -569,13 +570,41 @@ def test_download_google_drive_image_default_post_processing(
         assert img.size == target_dimensions(800)
 
 
-def test_download_local_file_is_no_op(image_local_file: CardImage, counter: Counter, queue: Queue[CardImage]):
-    assert image_local_file.file_exists() is True
-    file_size = os.stat(image_local_file.file_path).st_size
-    image_local_file.download_image(download_bar=counter, queue=queue, post_processing_config=DEFAULT_POST_PROCESSING)
-    assert image_local_file.file_exists() is True
-    assert image_local_file.errored is False
-    assert_file_size(image_local_file.file_path, file_size)
+def _local_file_card(file_path: str) -> CardImage:
+    return CardImage(
+        drive_id=file_path,
+        source_type=SourceType.LOCAL_FILE,
+        slots={0},
+        name=os.path.basename(file_path),
+        file_path=file_path,
+    )
+
+
+def test_download_local_file_is_no_op(tmp_path, counter: Counter, queue: Queue[CardImage]):
+    dest = tmp_path / f"{TEST_IMAGE}.png"
+    shutil.copy(os.path.join(CARDS_FILE_PATH, f"{TEST_IMAGE}.png"), dest)
+    card = _local_file_card(str(dest))
+    assert card.file_exists() is True
+    file_size = os.stat(card.file_path).st_size
+    card.download_image(download_bar=counter, queue=queue, post_processing_config=DEFAULT_POST_PROCESSING)
+    assert card.file_exists() is True
+    assert card.errored is False
+    assert_file_size(card.file_path, file_size)
+
+
+def test_download_undersized_local_file_is_processed(tmp_path, counter: Counter, queue: Queue[CardImage]):
+    from PIL import Image
+
+    from src.processing import target_dimensions
+
+    dest = tmp_path / "undersized.png"
+    Image.new("RGB", (20, 30), (10, 20, 30)).save(dest)
+    card = _local_file_card(str(dest))
+    card.download_image(download_bar=counter, queue=queue, post_processing_config=DEFAULT_POST_PROCESSING)
+    assert card.file_exists() is True
+    assert card.errored is False
+    with Image.open(dest) as img:
+        assert img.size == target_dimensions(800)
 
 
 def test_download_google_drive_image_downscaled(

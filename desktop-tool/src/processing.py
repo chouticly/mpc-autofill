@@ -138,10 +138,23 @@ def post_process_image(raw_image: bytes, config: ImagePostProcessingConfig) -> "
     return img
 
 
+def _exif_with_dpi(dpi: int) -> bytes:
+    from PIL import Image
+    from PIL.ExifTags import Base
+
+    exif = Image.Exif()
+    exif[Base.XResolution] = dpi
+    exif[Base.YResolution] = dpi
+    exif[Base.ResolutionUnit] = 2
+    return exif.tobytes()
+
+
 def save_processed_image(img: "Image.Image", file_path: str, dpi: int) -> None:
     suffix = Path(file_path).suffix.lower()
     if suffix in {".jpg", ".jpeg"}:
-        img.save(file_path, dpi=(dpi, dpi), quality=95, subsampling=0)
+        img.save(file_path, format="JPEG", dpi=(dpi, dpi), quality=95, subsampling=0)
+    elif suffix == ".webp":
+        img.save(file_path, format="WEBP", lossless=True, exif=_exif_with_dpi(dpi))
     else:
         img.save(file_path, dpi=(dpi, dpi))
 
@@ -149,7 +162,14 @@ def save_processed_image(img: "Image.Image", file_path: str, dpi: int) -> None:
 def _image_dpi_meets_minimum(img: "Image.Image") -> bool:
     dpi = img.info.get("dpi")
     if not dpi:
-        return False
+        from PIL.ExifTags import Base
+
+        exif = img.getexif()
+        x_res = exif.get(Base.XResolution)
+        y_res = exif.get(Base.YResolution)
+        if x_res is None or y_res is None:
+            return False
+        dpi = (x_res, y_res)
     try:
         return float(dpi[0]) >= MIN_PRINT_DPI - 0.05 and float(dpi[1]) >= MIN_PRINT_DPI - 0.05
     except (TypeError, ValueError, IndexError):
