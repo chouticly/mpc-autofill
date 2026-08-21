@@ -191,7 +191,8 @@ class CardImage:
                     and self.file_path is not None
                     and os.path.abspath(source_path) != os.path.abspath(self.file_path)
                 )
-                dest_needs_refresh = dest_is_working_copy and not image_meets_mpc_print_requirements(
+                should_print_ready = dest_is_working_copy or post_processing_config is not None
+                dest_needs_refresh = should_print_ready and not image_meets_mpc_print_requirements(
                     self.file_path or "", post_processing_config
                 )
                 if (
@@ -205,7 +206,7 @@ class CardImage:
                         file_path=self.file_path,
                         post_processing_config=post_processing_config,
                     )
-                    if not self.errored and dest_is_working_copy:
+                    if not self.errored and should_print_ready:
                         self.errored = not ensure_mpc_print_ready(self.file_path, post_processing_config)
                 if self.file_exists() and not self.errored:
                     self.downloaded = True
