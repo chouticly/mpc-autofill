@@ -8,7 +8,10 @@ from src.constants import (
     EMBEDDED_PRINT_DPI,
     MIN_PRINT_DPI,
     MPC_BLEED_HEIGHT_AT_300_DPI,
+    MPC_BLEED_PIXELS_PER_SIDE_AT_300_DPI,
     MPC_BLEED_WIDTH_AT_300_DPI,
+    MPC_TRIM_HEIGHT_AT_300_DPI,
+    MPC_TRIM_WIDTH_AT_300_DPI,
     ImageResizeMethods,
 )
 
@@ -29,6 +32,16 @@ def target_dimensions(max_dpi: int) -> tuple[int, int]:
     return width, height
 
 
+def bleed_pixels_per_side(max_dpi: int) -> int:
+    return round(MPC_BLEED_PIXELS_PER_SIDE_AT_300_DPI * max_dpi / 300)
+
+
+def trim_dimensions(max_dpi: int) -> tuple[int, int]:
+    width, height = target_dimensions(max_dpi)
+    bleed = bleed_pixels_per_side(max_dpi)
+    return width - 2 * bleed, height - 2 * bleed
+
+
 def embedded_file_dpi(max_dpi: int) -> int:
     return max(max_dpi, EMBEDDED_PRINT_DPI)
 
@@ -44,10 +57,56 @@ def _flatten_alpha(img: "Image.Image") -> "Image.Image":
     return img.convert("RGB")
 
 
-def _pad_to_mpc_aspect(img: "Image.Image") -> "Image.Image":
-    """Pad (edge-extend) an image to the MPC card+bleed aspect ratio."""
+def _image_is_trim_sized(img: "Image.Image") -> bool:
+    current_ratio = img.width / img.height
+    trim_ratio = MPC_TRIM_WIDTH_AT_300_DPI / MPC_TRIM_HEIGHT_AT_300_DPI
+    bleed_ratio = MPC_BLEED_WIDTH_AT_300_DPI / MPC_BLEED_HEIGHT_AT_300_DPI
+    return abs(current_ratio - trim_ratio) < abs(current_ratio - bleed_ratio)
+
+
+def _scale_to_fit_within(img: "Image.Image", box_width: int, box_height: int, resample: int) -> "Image.Image":
+    scale = min(box_width / img.width, box_height / img.height)
+    new_width = max(1, round(img.width * scale))
+    new_height = max(1, round(img.height * scale))
+    if (new_width, new_height) == img.size:
+        return img
+    return img.resize((new_width, new_height), resample)
+
+
+def _paste_centered_with_edge_extend(img: "Image.Image", canvas_size: tuple[int, int]) -> "Image.Image":
     from PIL import Image
 
+    canvas_width, canvas_height = canvas_size
+    image_width, image_height = img.size
+    offset_x = (canvas_width - image_width) // 2
+    offset_y = (canvas_height - image_height) // 2
+    if img.size == canvas_size:
+        return img
+
+    canvas = Image.new("RGB", canvas_size, (0, 0, 0))
+    canvas.paste(img, (offset_x, offset_y))
+
+    if offset_y > 0:
+        top = img.crop((0, 0, image_width, 1)).resize((image_width, offset_y))
+        canvas.paste(top, (offset_x, 0))
+        bottom_height = canvas_height - image_height - offset_y
+        if bottom_height > 0:
+            bottom = img.crop((0, image_height - 1, image_width, image_height)).resize((image_width, bottom_height))
+            canvas.paste(bottom, (offset_x, offset_y + image_height))
+
+    if offset_x > 0:
+        left = canvas.crop((offset_x, 0, offset_x + 1, canvas_height)).resize((offset_x, canvas_height))
+        canvas.paste(left, (0, 0))
+        right_width = canvas_width - image_width - offset_x
+        if right_width > 0:
+            right_x = offset_x + image_width - 1
+            right = canvas.crop((right_x, 0, right_x + 1, canvas_height)).resize((right_width, canvas_height))
+            canvas.paste(right, (offset_x + image_width, 0))
+
+    return canvas
+
+
+def _pad_to_mpc_aspect(img: "Image.Image") -> "Image.Image":
     target_ratio = MPC_BLEED_WIDTH_AT_300_DPI / MPC_BLEED_HEIGHT_AT_300_DPI
     width, height = img.size
     current_ratio = width / height
@@ -56,34 +115,8 @@ def _pad_to_mpc_aspect(img: "Image.Image") -> "Image.Image":
         return img
 
     if current_ratio > target_ratio:
-        # Too wide — pad top/bottom
-        new_height = round(width / target_ratio)
-        pad_y = max(0, (new_height - height) // 2)
-        padded = Image.new("RGB", (width, new_height), (0, 0, 0))
-        padded.paste(img, (0, pad_y))
-        # Fill remaining vertical bands by extending edge rows
-        if pad_y > 0:
-            top = img.crop((0, 0, width, 1)).resize((width, pad_y))
-            padded.paste(top, (0, 0))
-            bottom_height = new_height - height - pad_y
-            if bottom_height > 0:
-                bottom = img.crop((0, height - 1, width, height)).resize((width, bottom_height))
-                padded.paste(bottom, (0, height + pad_y))
-        return padded
-
-    # Too tall — pad left/right
-    new_width = round(height * target_ratio)
-    pad_x = max(0, (new_width - width) // 2)
-    padded = Image.new("RGB", (new_width, height), (0, 0, 0))
-    padded.paste(img, (pad_x, 0))
-    if pad_x > 0:
-        left = img.crop((0, 0, 1, height)).resize((pad_x, height))
-        padded.paste(left, (0, 0))
-        right_width = new_width - width - pad_x
-        if right_width > 0:
-            right = img.crop((width - 1, 0, width, height)).resize((right_width, height))
-            padded.paste(right, (width + pad_x, 0))
-    return padded
+        return _paste_centered_with_edge_extend(img, (width, round(width / target_ratio)))
+    return _paste_centered_with_edge_extend(img, (round(height * target_ratio), height))
 
 
 def post_process_image(raw_image: bytes, config: ImagePostProcessingConfig) -> "Image":
@@ -91,9 +124,14 @@ def post_process_image(raw_image: bytes, config: ImagePostProcessingConfig) -> "
 
     img = Image.open(io.BytesIO(raw_image))
     img = _flatten_alpha(img)
-    img = _pad_to_mpc_aspect(img)
-
     target_width, target_height = target_dimensions(config.max_dpi)
+
+    if _image_is_trim_sized(img):
+        trim_width, trim_height = trim_dimensions(config.max_dpi)
+        img = _scale_to_fit_within(img, trim_width, trim_height, config.downscale_alg.value)
+        return _paste_centered_with_edge_extend(img, (target_width, target_height))
+
+    img = _pad_to_mpc_aspect(img)
     if img.size != (target_width, target_height):
         img = img.resize((target_width, target_height), config.downscale_alg.value)
 

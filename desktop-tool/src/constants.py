@@ -42,9 +42,13 @@ SCRYFALL_API_BASE = "https://api.scryfall.com"
 SCRYFALL_USER_AGENT = "mpc-autofill-desktop/1.0"
 SCRYFALL_ACCEPT = "application/json"
 
-# MPC card with bleed: height 1110 px ≈ 300 DPI; width follows 63×88 mm + bleed
+# MPC card with bleed: height 1110 px ≈ 300 DPI; width follows 63×88 mm + bleed.
+# Bleed is 36 px (0.12 in) per side at 300 DPI; the inner trim is 63×88 mm.
+MPC_BLEED_PIXELS_PER_SIDE_AT_300_DPI = 36
 MPC_BLEED_WIDTH_AT_300_DPI = 816
 MPC_BLEED_HEIGHT_AT_300_DPI = 1110
+MPC_TRIM_WIDTH_AT_300_DPI = MPC_BLEED_WIDTH_AT_300_DPI - 2 * MPC_BLEED_PIXELS_PER_SIDE_AT_300_DPI
+MPC_TRIM_HEIGHT_AT_300_DPI = MPC_BLEED_HEIGHT_AT_300_DPI - 2 * MPC_BLEED_PIXELS_PER_SIDE_AT_300_DPI
 MIN_PRINT_DPI = 300
 # 304 survives PNG pHYs metre rounding without falling under 300
 EMBEDDED_PRINT_DPI = 304
